@@ -1,0 +1,6 @@
+{
+    "cursor.cmdk.useThemedDiffBackground2": true,
+    "workbench.colorTheme": "Google Colab Dark Theme",
+    "workbench.preferredDarkColorTheme": "Google Colab Dark Theme",
+    "jupyter.themeMatplotlibPlots": true
+}

@@ -1,0 +1,43 @@
+trainer:
+  max_epochs: 100
+  log_every_n_steps: 2 
+  accelerator: "cpu"
+  default_root_dir: baseline_model_train
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/loss
+        mode: min
+        save_top_k: 1
+        save_last: TRUE
+        filename: "{epoch}-{val/loss:.2f}"
+model:
+  class_path: ftw_tools.training.trainers.CustomSemanticSegmentationTask
+  init_args:
+    loss: "jaccard"
+    model: "unet"
+    backbone: "efficientnet-b3"
+    weights: TRUE
+    patch_weights: TRUE
+    in_channels: 8
+    num_classes: 3
+    num_filters: 64
+    ignore_index: null
+    lr: 1e-3
+    patience: 100
+data:
+  class_path: ftw_tools.training.datamodules.FTWDataModule
+  init_args:
+    batch_size: 8
+    num_workers: 2
+    num_samples: -1
+    train_countries:
+      - kenya_counties_batch
+    val_countries:
+      - kenya_counties_batch
+    test_countries:
+      - kenya_counties_batch
+  dict_kwargs:
+    root: data
+    load_boundaries: TRUE
+seed_everything: 7

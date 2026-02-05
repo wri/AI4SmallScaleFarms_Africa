@@ -22,6 +22,10 @@ ftw_tools.egg-info/
 /.ruff_cache/
 /.pixi/
 .DS_Store
+# Results from finetuning and baseline testing
+finetune_results/
+baseline_test_results/
+# Baseline and Finetune checkpoints
 
 # Python virtual environments
 venv/
@@ -31,3 +35,22 @@ ENV/
 *.pyc
 *.pyo
 *.egg-info/
+
+# Some extra inference data no one needs
+inference_output/
+
+3_Class_CCBY_v1_finetune/
+3_Class_FULL_multiWindow_v2_finetune/
+3_Class_FULL_v1_finetune/
+
+# Finetune checkpoints
+PRUE_EFNET_B3_finetune/
+PRUE_EFNET_B3_finetune_gpu1/
+PRUE_EFNET_B5_finetune/
+PRUE_EFNET_B7_finetune/
+PRUE_EFNET_B7_finetune_weight_true/
+PRUE_EFNET_B7_finetune_frozen_backbone/
+PRUE_EFNET_B7_finetune_spot/
+
+# Large test imagery (use locally or via DVC/Git LFS if needed)
+tests/Spot_inference/

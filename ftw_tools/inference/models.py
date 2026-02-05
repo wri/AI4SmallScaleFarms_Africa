@@ -18,8 +18,8 @@ from ultralytics.engine.results import Results
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 
-def load_model_from_checkpoint(path: str) -> tuple[nn.Module, str]:
-    """Load a model from a checkpoint file."""
+def load_model_from_checkpoint(path: str) -> tuple[nn.Module, str, dict]:
+    """Load a model from a checkpoint file. Returns (model, model_type, hparams)."""
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     hparams = ckpt["hyper_parameters"]
     model_type = hparams["model"]
@@ -87,7 +87,7 @@ def load_model_from_checkpoint(path: str) -> tuple[nn.Module, str]:
             classes=hparams["num_classes"],
         )
     model.load_state_dict(state_dict, strict=True)
-    return model, model_type
+    return model, model_type, hparams
 
 
 class FCSiamAvg(FCSiamDiff):

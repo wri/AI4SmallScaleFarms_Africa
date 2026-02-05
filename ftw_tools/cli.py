@@ -378,6 +378,20 @@ def model_fit(config, ckpt_path, cli_args):
     show_default=True,
     help="Whether to compute 95% confidence intervals using bootstrap sampling.",
 )
+@click.option(
+    "--single_window_subdir",
+    type=str,
+    default=None,
+    show_default=True,
+    help="For single-window datasets: S2 image subdirectory (e.g. 'scaled'). Use with --temporal_options windowB/windowA/random_window.",
+)
+@click.option(
+    "--single_window_channels",
+    type=int,
+    default=None,
+    show_default=True,
+    help="For single-window datasets: number of bands in S2 images (e.g. 3 for RGB, 4 for RGBN).",
+)
 def model_test(
     model,
     countries,
@@ -394,8 +408,15 @@ def model_test(
     resize_factor,
     num_workers,
     bootstrap,
+    single_window_subdir,
+    single_window_channels,
 ):
     from ftw_tools.training.eval import test
+
+    # Build single_window_subdirs dict if subdir is specified
+    single_window_subdirs = None
+    if single_window_subdir:
+        single_window_subdirs = {c: single_window_subdir for c in countries}
 
     test(
         model,
@@ -413,6 +434,8 @@ def model_test(
         resize_factor,
         num_workers,
         bootstrap,
+        single_window_subdirs=single_window_subdirs,
+        single_window_channels=single_window_channels,
     )
 
 
@@ -770,6 +793,13 @@ def inference_download(
     show_default=True,
     help="Save segmentation softmax scores (rescaled to [0,255]) instead of classes (argmax of scores)",
 )
+@click.option(
+    "--input_scale",
+    type=click.FloatRange(min=0, max=None),
+    default=None,
+    show_default=True,
+    help="Input value range: divide pixels by this so 0–INPUT_SCALE maps to training range. Use 255 for 0–255 uint8 imagery (e.g. RGB). Default expects reflectance-like 0–10000.",
+)
 def inference_run(
     input: str,
     model: str,
@@ -783,6 +813,7 @@ def inference_run(
     overwrite: bool,
     mps_mode: bool,
     save_scores: bool,
+    input_scale: Optional[float],
 ):
     from ftw_tools.inference.inference import run
 
@@ -799,6 +830,7 @@ def inference_run(
         overwrite,
         mps_mode,
         save_scores,
+        input_scale=input_scale,
     )
 
 

@@ -46,7 +46,7 @@ def main(args: argparse.Namespace):
     device = torch.device(f"cuda:{args.gpu}")
     overlap_size = args.size
 
-    model, model_type = load_model_from_checkpoint(args.model)
+    model, model_type, _ = load_model_from_checkpoint(args.model)
     model = model.eval().to(device)
 
     all_results = []

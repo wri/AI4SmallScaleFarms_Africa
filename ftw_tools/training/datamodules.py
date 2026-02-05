@@ -56,6 +56,8 @@ class FTWDataModule(LightningDataModule):
         brightness_aug: bool = False,
         preprocess_aug: bool = False,
         resize_aug: bool = False,
+        single_window_subdirs: Optional[dict[str, str]] = None,
+        single_window_channels: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a new FTWDataModule instance.
@@ -75,6 +77,12 @@ class FTWDataModule(LightningDataModule):
             preprocess_aug: If True, replaces fixed 3000 division with random per-batch
                 divisor drawn uniformly from [1500, 4500] for training batches only.
                 Mutually exclusive with brightness_aug.
+            single_window_subdirs: Optional dict mapping country name to S2 image
+                subdir for single-window datasets (e.g. {"kenya_spot_processed": "scaled"}).
+                Use with temporal_options in (windowA, windowB, random_window).
+            single_window_channels: When using single_window_subdirs, number of bands
+                in the S2 images (e.g. 3 for RGB, 4 for RGBN). If None, defaults to 4.
+                Must match model in_channels.
             **kwargs: Additional keyword arguments passed to
                 :class:`~src.datasets.FTW`.
         """
@@ -92,15 +100,18 @@ class FTWDataModule(LightningDataModule):
         self.temporal_options = temporal_options
         self.num_samples = num_samples
         self.ignore_sample_fn = kwargs.pop("ignore_sample_fn", None)
+        self.single_window_subdirs = single_window_subdirs or {}
+        self.single_window_channels = single_window_channels
         self.kwargs = kwargs
         self.preprocess_aug = preprocess_aug
         if self.preprocess_aug and brightness_aug:
             raise ValueError("preprocess_aug is mutually exclusive with brightness_aug")
 
-        # for the temporal option windowA, windowB and median we will have 4 channel input
+        # for the temporal option windowA, windowB and median we will have 4 channel input (or 3 if single_window_channels=3)
         if self.temporal_options in ("windowA", "windowB", "median", "random_window"):
-            self.mean = torch.tensor([0, 0, 0, 0])
-            self.std = torch.tensor([3000, 3000, 3000, 3000])
+            nch = self.single_window_channels if (self.single_window_subdirs and self.single_window_channels is not None) else 4
+            self.mean = torch.tensor([0] * nch)
+            self.std = torch.tensor([3000] * nch)
         elif temporal_options == "stacked":
             self.mean = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0])
             self.std = torch.tensor([3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000])
@@ -171,6 +182,7 @@ class FTWDataModule(LightningDataModule):
                 temporal_options=self.temporal_options,
                 num_samples=self.num_samples,
                 ignore_sample_fn=self.ignore_sample_fn,
+                single_window_subdirs=self.single_window_subdirs,
                 **self.kwargs,
             )
         if stage in ["fit", "validate"]:
@@ -181,6 +193,7 @@ class FTWDataModule(LightningDataModule):
                 load_boundaries=self.load_boundaries,
                 temporal_options=self.temporal_options,
                 num_samples=self.num_samples,
+                single_window_subdirs=self.single_window_subdirs,
             )
         if stage == "test":
             self.test_dataset = FTW(
@@ -190,6 +203,7 @@ class FTWDataModule(LightningDataModule):
                 load_boundaries=self.load_boundaries,
                 temporal_options=self.temporal_options,
                 num_samples=self.num_samples,
+                single_window_subdirs=self.single_window_subdirs,
             )
 
     def train_dataloader(self) -> Any:

@@ -234,11 +234,9 @@ def fit(config, ckpt_path, cli_args):
     print("Running fit command")
 
     # Construct the arguments for PyTorch Lightning CLI
-    cli_args = ["fit", f"--config={config}"] + list(cli_args)
-
-    # If a checkpoint path is provided, append it to the CLI arguments
-    if ckpt_path:
-        cli_args += [f"--ckpt_path={ckpt_path}"]
+    # We use LightningCLI with run=False (manual fit call), so the parser does NOT
+    # expect the `{fit,validate,test,predict}` subcommand. Only pass config/overrides.
+    cli_args = [f"--config={config}"] + list(cli_args)
 
     print(f"CLI arguments: {cli_args}")
 
@@ -252,16 +250,37 @@ def fit(config, ckpt_path, cli_args):
     }
     os.environ.update(rasterio_best_practices)
 
-    # Run the LightningCLI with the constructed arguments
+    # Instantiate LightningCLI WITHOUT passing ckpt_path.
+    #
+    # Rationale: LightningCLI's `--ckpt_path` triggers checkpoint hyperparameter parsing
+    # and effectively treats the checkpoint as a "resume" source (overriding config).
+    # For fine-tuning from released pretrained checkpoints, we want to:
+    #  - build the model/datamodule from the provided config (so freeze flags etc apply)
+    #  - then load the checkpoint weights (state_dict) into that model
+    #  - start training without requiring checkpoint hyperparameters to match CLI schema
     cli = LightningCLI(
         model_class=BaseTask,
         seed_everything_default=0,
         subclass_mode_model=True,
         subclass_mode_data=True,
         save_config_kwargs={"overwrite": True},
-        args=cli_args,  # Pass the constructed cli_args
+        args=cli_args,
+        run=False,
     )
 
+    if ckpt_path:
+        print(f"Loading pretrained weights from checkpoint: {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        state_dict = ckpt.get("state_dict", ckpt)
+        missing, unexpected = cli.model.load_state_dict(state_dict, strict=False)
+        if missing:
+            print(f"Missing keys when loading checkpoint (showing up to 25): {missing[:25]}")
+        if unexpected:
+            print(
+                f"Unexpected keys when loading checkpoint (showing up to 25): {unexpected[:25]}"
+            )
+
+    cli.trainer.fit(cli.model, datamodule=cli.datamodule)
     print("Finished")
 
 
@@ -281,6 +300,8 @@ def test(
     resize_factor: int,
     num_workers: int,
     bootstrap: bool = False,
+    single_window_subdirs: dict[str, str] | None = None,
+    single_window_channels: int | None = None,
 ):
     """Command to test the model."""
     target_split = "val" if use_val_set else "test"
@@ -319,6 +340,7 @@ def test(
         load_boundaries=test_on_3_classes,
         temporal_options=temporal_options,
         swap_order=swap_order,
+        single_window_subdirs=single_window_subdirs,
     )
     dl = DataLoader(ds, batch_size=64, shuffle=False, num_workers=num_workers)
     print(f"Created dataloader with {len(ds)} samples in {time.time() - tic:.2f}s")

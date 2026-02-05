@@ -32,9 +32,35 @@ TORCHGEO_08 = Version("0.8.0.dev0")
 TORCHGEO_CURRENT = parse(torchgeo.__version__)
 
 
+# Training uses Normalize(mean=0, std=3000), i.e. pixel/3000, with reflectance-like
+# values (e.g. 0–10000). For 0–255 input we scale to that range: 255 -> 10000/3000.
+REFLEX_SCALE = 10000.0 / 3000.0  # ~3.33
+
+
 def default_preprocess(sample):
+    """Expects reflectance-like values (e.g. 0–10000). Divides by 3000 to match training."""
     sample["image"] = sample["image"] / 3000
     return sample
+
+
+def make_scale_preprocess(max_value: float):
+    """Scale 0–max_value input to same range as training (0–10000 then /3000)."""
+
+    def _preprocess(sample):
+        img = sample["image"]
+        if isinstance(img, torch.Tensor):
+            img = img.float() / max_value * REFLEX_SCALE
+        else:
+            img = np.asarray(img, dtype=np.float32) / max_value * REFLEX_SCALE
+        sample["image"] = img
+        return sample
+
+    return _preprocess
+
+
+def preprocess_0_255(sample):
+    """For 0–255 uint8 input. Scale to same range as default (0–10000 then /3000)."""
+    return make_scale_preprocess(255.0)(sample)
 
 
 class SingleRasterDataset(RasterDataset):
@@ -128,8 +154,15 @@ def run(
     overwrite,
     mps_mode,
     save_scores,
-    preprocess_fn: Callable = default_preprocess,
+    preprocess_fn: Callable | None = None,
+    input_scale: float | None = None,
 ):
+    if preprocess_fn is None:
+        preprocess_fn = (
+            make_scale_preprocess(input_scale)
+            if input_scale is not None
+            else default_preprocess
+        )
     device, transform, input_shape, patch_size, stride, padding = setup_inference(
         input, out, gpu, patch_size, padding, overwrite, mps_mode
     )
@@ -155,7 +188,17 @@ def run(
 
     # Load task
     tic = time.time()
-    model, model_type = load_model_from_checkpoint(model_ckpt_path)
+    model, model_type, hparams = load_model_from_checkpoint(model_ckpt_path)
+    in_ch = hparams.get("in_channels")
+    num_cl = hparams.get("num_classes")
+    print(
+        f"Model: {model_type}, in_channels={in_ch}, num_classes={num_cl}"
+        + (
+            " (single-window)"
+            if model_type not in ("fcsiamdiff", "fcsiamconc", "fcsiamavg")
+            else " (two-window: expects 2*C bands)"
+        )
+    )
     model = model.eval().to(device)
 
     if mps_mode:

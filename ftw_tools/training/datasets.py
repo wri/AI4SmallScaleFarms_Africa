@@ -34,6 +34,7 @@ class FTW(NonGeoDataset):
         swap_order: bool = False,
         num_samples: int = -1,
         ignore_sample_fn: Optional[str] = None,
+        single_window_subdirs: Optional[dict[str, str]] = None,
         verbose: bool = True,
     ) -> None:
         """Initialize a new FTW dataset instance.
@@ -52,6 +53,10 @@ class FTW(NonGeoDataset):
                 windowB, median, rgb, random_window)
             swap_order: if True, swap the order of temporal data (i.e. use window A first)
             ignore_sample_fn: path to a filename with a list of samples to ignore
+            single_window_subdirs: optional dict mapping country name to S2 image
+                subdir (e.g. {"kenya_spot_processed": "scaled"}) for datasets that
+                have only one time window instead of window_a and window_b. Use with
+                temporal_options in (windowA, windowB, random_window) and in_channels: 4.
         Raises:
             AssertionError: if ``countries`` argument is invalid
             AssertionError: if ``split`` argument is invalid
@@ -86,6 +91,17 @@ class FTW(NonGeoDataset):
                     "Can only use swap_order with temporal_options stacked or rgb"
                 )
         self.swap_order = swap_order
+        self.single_window_subdirs = single_window_subdirs or {}
+
+        if self.single_window_subdirs and temporal_options not in (
+            "windowA",
+            "windowB",
+            "random_window",
+        ):
+            raise ValueError(
+                f"single_window_subdirs requires temporal_options in "
+                f"(windowA, windowB, random_window); got {temporal_options!r}"
+            )
 
         if verbose:
             if self.load_boundaries:
@@ -99,6 +115,8 @@ class FTW(NonGeoDataset):
                 print("Using window B first, then window A")
             if self.load_edges:
                 print("Loading edge masks")
+            if self.single_window_subdirs:
+                print("Single-window countries (S2 subdir):", self.single_window_subdirs)
 
         if not self._check_integrity():
             raise RuntimeError(
@@ -126,10 +144,54 @@ class FTW(NonGeoDataset):
             chips_fn = os.path.join(country_root, f"chips_{country}.parquet")
             chips_df = gpd.read_parquet(str(chips_fn))
             chips_df = chips_df[chips_df["split"] == split]
-            aoi_ids = chips_df["aoi_id"].values
+            # Parquet may use aoi_id (e.g. kenya_counties_batch) or chip_id (e.g. kenya_spot_processed)
+            if "aoi_id" in chips_df.columns:
+                id_col = "aoi_id"
+            elif "chip_id" in chips_df.columns:
+                id_col = "chip_id"
+            else:
+                raise KeyError(
+                    f"chips parquet {chips_fn} must have column 'aoi_id' or 'chip_id'; "
+                    f"got {list(chips_df.columns)}"
+                )
+            aoi_ids = chips_df[id_col].values
+
+            is_single_window = country in self.single_window_subdirs
+            s2_subdir = self.single_window_subdirs.get(country)
 
             for idx in aoi_ids:
                 if (country, idx) in bad_samples:
+                    continue
+
+                if is_single_window and s2_subdir:
+                    # Single-window layout: one S2 folder (e.g. scaled /)
+                    s2_fn = Path(
+                        os.path.join(country_root, s2_subdir, f"{idx}.tif")
+                    )
+                    masks_2c_fn = Path(
+                        os.path.join(
+                            country_root, "label_masks/semantic_2class", f"{idx}.tif"
+                        )
+                    )
+                    masks_3c_fn = Path(
+                        os.path.join(
+                            country_root, "label_masks/semantic_3class", f"{idx}.tif"
+                        )
+                    )
+                    edge_fn = Path(
+                        os.path.join(country_root, "label_masks/edges", f"{idx}.tif")
+                    )
+                    if not (s2_fn.exists() and masks_2c_fn.exists() and masks_3c_fn.exists()):
+                        continue
+                    if self.load_edges and not edge_fn.exists():
+                        raise ValueError(
+                            "ERROR: Missing edge files! Run ./scripts/add_edges_to_dataset.py"
+                        )
+                    mask_fn = masks_3c_fn if self.load_boundaries else masks_2c_fn
+                    file_record = {"s2_image": str(s2_fn), "mask": str(mask_fn)}
+                    if self.load_edges:
+                        file_record["edge"] = str(edge_fn)
+                    all_filenames.append(file_record)
                     continue
 
                 window_b_fn = Path(
@@ -235,7 +297,25 @@ class FTW(NonGeoDataset):
                 print(f"Country {country} does not have chips file")
                 return False
 
-            if self.load_boundaries:
+            if country in self.single_window_subdirs:
+                s2_subdir = self.single_window_subdirs[country]
+                required = [
+                    os.path.exists(os.path.join(country_dir, s2_subdir)),
+                    os.path.exists(
+                        os.path.join(country_dir, "label_masks/semantic_3class")
+                    )
+                    if self.load_boundaries
+                    else os.path.exists(
+                        os.path.join(country_dir, "label_masks/semantic_2class")
+                    ),
+                ]
+                if not all(required):
+                    print(
+                        f"Country {country} (single-window) does not have "
+                        f"required directories: {s2_subdir}, label_masks"
+                    )
+                    return False
+            elif self.load_boundaries:
                 if not all(
                     [
                         os.path.exists(os.path.join(country_dir, "s2_images/window_b")),
@@ -281,29 +361,35 @@ class FTW(NonGeoDataset):
         filenames = self.filenames[index]
 
         images = []
-        if self.temporal_options in ("stacked", "median", "windowB", "rgb"):
-            with rasterio.open(filenames["window_b"]) as f:
-                window_b_img = f.read()
-                if self.temporal_options == "rgb":  # select 3 channels only
-                    window_b_img = window_b_img[:3]
-                images.append(window_b_img)
-
-        if self.temporal_options in ("stacked", "median", "windowA", "rgb"):
-            with rasterio.open(filenames["window_a"]) as f:
-                window_a_img = f.read()
-                if self.temporal_options == "rgb":  # select 3 channels only
-                    window_a_img = window_a_img[:3]
-                images.append(window_a_img)
-
-        if self.temporal_options == "random_window":
-            if random.random() < 0.5:
-                with rasterio.open(filenames["window_a"]) as f:
-                    window_a_img = f.read()
-                images.append(window_a_img)
-            else:
+        if "s2_image" in filenames:
+            # Single-window dataset: one 4-channel S2 image
+            with rasterio.open(filenames["s2_image"]) as f:
+                img = f.read()
+            images.append(img)
+        else:
+            if self.temporal_options in ("stacked", "median", "windowB", "rgb"):
                 with rasterio.open(filenames["window_b"]) as f:
                     window_b_img = f.read()
-                images.append(window_b_img)
+                    if self.temporal_options == "rgb":  # select 3 channels only
+                        window_b_img = window_b_img[:3]
+                    images.append(window_b_img)
+
+            if self.temporal_options in ("stacked", "median", "windowA", "rgb"):
+                with rasterio.open(filenames["window_a"]) as f:
+                    window_a_img = f.read()
+                    if self.temporal_options == "rgb":  # select 3 channels only
+                        window_a_img = window_a_img[:3]
+                    images.append(window_a_img)
+
+            if self.temporal_options == "random_window":
+                if random.random() < 0.5:
+                    with rasterio.open(filenames["window_a"]) as f:
+                        window_a_img = f.read()
+                    images.append(window_a_img)
+                else:
+                    with rasterio.open(filenames["window_b"]) as f:
+                        window_b_img = f.read()
+                    images.append(window_b_img)
 
         if self.swap_order and len(images) == 2:
             images = [images[1], images[0]]

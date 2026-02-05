@@ -48,6 +48,9 @@ ALL_COUNTRIES = [
     "spain",
     "sweden",
     "vietnam",
+    "kenya_counties",
+    "kenya_counties_batch",
+    "kenya_spot_processed",  # single-window S2 layout (e.g. sized256/ instead of window_a/window_b)
 ]
 
 # Countries with presence and absence data for training and evaluation

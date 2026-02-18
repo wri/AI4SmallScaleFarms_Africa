@@ -43,12 +43,13 @@ SCALE_OUT    ?=  # default: <stem>_scaled.tif next to SCALE_INPUT
 SHP_INPUT    ?=  # parquet or geojson file to convert
 SHP_OUT      ?=  # output .shp path (optional; default: same basename as SHP_INPUT)
 
-.PHONY: help train test inference polygonize to-shp run-all scale-image scale-test-image
+.PHONY: help setup train test inference polygonize to-shp run-all scale-image scale-test-image
 
 help:
 	@echo "FTW baselines Makefile"
 	@echo ""
 	@echo "Targets:"
+	@echo "  setup       Create venv and install dev deps via uv"
 	@echo "  train        Train a model (set CONFIG=..., optionally CKPT_PATH=...)"
 	@echo "  test        Run evaluation (set TEST_MODEL=path/to.ckpt, TEST_COUNTRIES=...)"
 	@echo "  inference   Run inference on an image (set INPUT_IMAGE=..., MODEL=...)"
@@ -59,6 +60,7 @@ help:
 	@echo "  run-all     inference -> polygonize (set INPUT_IMAGE=..., MODEL=...)"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make setup"
 	@echo "  make train CONFIG=configs/prue_efnet_b7_finetune_config_spot.yaml"
 	@echo "  make test TEST_MODEL=PRUE_EFNET_B7_finetune_spot/lightning_logs/version_6/checkpoints/epoch=283-val_loss=0.02.ckpt TEST_COUNTRIES=kenya_spot_processed TEST_ON_3=1"
 	@echo "  make inference INPUT_IMAGE=scene.tif MODEL=path/to.ckpt INPUT_SCALE=255 OVERWRITE=1"
@@ -66,6 +68,19 @@ help:
 	@echo "  make to-shp SHP_INPUT=scene_polygons.parquet SHP_OUT=scene_polygons.shp"
 	@echo "  make scale-test-image   # scale tests/kenya_tile_*.tif to uint16"
 	@echo "  make inference INPUT_IMAGE=tests/kenya_tile_32636_00049_-0011_20190916_scaled.tif MODEL=path/to.ckpt  # no --input_scale"
+
+# --- Environment setup (uv) ---
+setup:
+	@echo "Creating virtual environment with uv..."
+	uv venv
+	@echo "Bootstrapping build deps..."
+	# flatdict still imports pkg_resources; keep setuptools on a compatible release.
+	@echo "Syncing dependencies (all extras + dev)..."
+	uv sync --all-extras --dev
+	@echo ""
+	@echo "Activate with:"
+	@echo "  source .venv/bin/activate  # macOS/Linux"
+	@echo "  .venv\\Scripts\\activate     # Windows"
 
 # --- Scale uint8 to uint16 [0-10000] (same as training chips) ---
 _scale_out = $(if $(SCALE_OUT),-o $(SCALE_OUT),)

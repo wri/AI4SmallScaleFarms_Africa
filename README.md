@@ -67,6 +67,11 @@ Create a virtual environment:
 uv venv
 ```
 
+Or use the Makefile target:
+```bash
+make setup
+```
+
 Activate your virtual environment:
 ```bash
 # On macOS and Linux:

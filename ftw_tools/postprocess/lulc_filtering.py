@@ -72,20 +72,31 @@ class RasterLULCFilter:
         # Define asset key depending on collection
         asset_key = "data" if collection_name == "io-lulc-annual-v02" else "map"
 
-        # Here we get the href of the asset.
-        # First item used for IO LULC couse it is most resent year.
-        # First item used for ESA LULC because it is the most recent version.
-        asset_href = items.items[0].assets[asset_key].href
+        # Try each item until one yields data in our bounds (first is preferred for recency)
+        try:
+            from rioxarray.exceptions import NoDataInBounds
+        except ImportError:
+            NoDataInBounds = Exception  # type: ignore
 
-        # Load data from asset
-        ds = rioxarray.open_rasterio(asset_href)
-        # Transform bounds to the size of the raster
-        minx, miny, maxx, maxy = warp.transform_bounds(
-            self.src_crs, ds.rio.crs, *self.src_bounds
+        for item in items.items:
+            if asset_key not in item.assets:
+                continue
+            asset_href = item.assets[asset_key].href
+            ds = rioxarray.open_rasterio(asset_href)
+            minx, miny, maxx, maxy = warp.transform_bounds(
+                self.src_crs, ds.rio.crs, *self.src_bounds
+            )
+            try:
+                clipped_ds = ds.rio.clip_box(
+                    minx=minx, miny=miny, maxx=maxx, maxy=maxy
+                )  # type: ignore
+                return clipped_ds
+            except NoDataInBounds:
+                continue
+        raise ValueError(
+            f"No LULC asset in {collection_name} has data for the input bounds. "
+            "Try a different collection (e.g. esa-worldcover) or check the image extent."
         )
-        clipped_ds = ds.rio.clip_box(minx=minx, miny=miny, maxx=maxx, maxy=maxy)  # type: ignore
-
-        return clipped_ds
 
     def filter_raster_by_lulc(
         self, input_path: str, lulc: xr.Dataset, output_path: str, save_lulc_tif: bool

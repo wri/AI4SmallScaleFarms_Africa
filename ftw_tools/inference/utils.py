@@ -6,6 +6,15 @@ import shapely
 from fiboa_cli.parquet import create_parquet
 
 
+def _to_polygons_only(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Return a GeoDataFrame with only Polygon geometries (explode multipolygons, drop non-polygons)."""
+    out = gdf.copy()
+    out = out.explode(index_parts=False, ignore_index=True)
+    out = out[out.geometry.geom_type == "Polygon"].reset_index(drop=True)
+    out = out[out.geometry.is_valid & ~out.geometry.is_empty]
+    return out
+
+
 def merge_polygons(
     polygons: gpd.GeoDataFrame,
     iou_thresh: float = 0.2,

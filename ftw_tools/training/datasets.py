@@ -53,7 +53,7 @@ class FTW(NonGeoDataset):
                 windowB, median, rgb, random_window)
             swap_order: if True, swap the order of temporal data (i.e. use window A first)
             ignore_sample_fn: path to a filename with a list of samples to ignore
-            single_window_subdirs: optional dict mapping country name to S2 image
+            single_window_subdirs: optional dict mapping country name to rgb image
                 subdir (e.g. {"kenya_spot_processed": "scaled"}) for datasets that
                 have only one time window instead of window_a and window_b. Use with
                 temporal_options in (windowA, windowB, random_window) and in_channels: 4.
@@ -97,10 +97,11 @@ class FTW(NonGeoDataset):
             "windowA",
             "windowB",
             "random_window",
+            "rgb",
         ):
             raise ValueError(
                 f"single_window_subdirs requires temporal_options in "
-                f"(windowA, windowB, random_window); got {temporal_options!r}"
+                f"(windowA, windowB, random_window, rgb); got {temporal_options!r}"
             )
 
         if verbose:

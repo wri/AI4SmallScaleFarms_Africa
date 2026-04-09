@@ -383,14 +383,14 @@ def model_fit(config, ckpt_path, cli_args):
     type=str,
     default=None,
     show_default=True,
-    help="For single-window datasets: S2 image subdirectory (e.g. 'scaled'). Use with --temporal_options windowB/windowA/random_window.",
+    help="For single-window datasets: image subdirectory (e.g. 'scaled'). Use with --temporal_options windowB/windowA/random_window.",
 )
 @click.option(
     "--single_window_channels",
     type=int,
     default=None,
     show_default=True,
-    help="For single-window datasets: number of bands in S2 images (e.g. 3 for RGB, 4 for RGBN).",
+    help="For single-window datasets: number of bands in rgb images (e.g. 3 for RGB, 4 for RGBN).",
 )
 def model_test(
     model,
@@ -492,9 +492,9 @@ def inference():
 @click.option(
     "--gpu",
     type=int,
-    default=-1,
+    default=0,
     show_default=True,
-    help="GPU to use, zero-based index. Set to -1 to use CPU. CPU is also always used if CUDA or MPS is not available.",
+    help="GPU index (e.g. 0). Use -1 to force CPU. If CUDA is unavailable, CPU is used automatically.",
 )
 @click.option(
     "--patch_size",
@@ -516,7 +516,7 @@ def inference():
     type=click.IntRange(min=1),
     default=4,
     show_default=True,
-    help="Number of workers to use for inference.",
+    help="DataLoader workers (0 = main process only; avoids multiprocessing issues with some setups).",
 )
 @click.option(
     "--padding",
@@ -737,9 +737,9 @@ def inference_download(
 @click.option(
     "--gpu",
     type=int,
-    default=-1,
+    default=0,
     show_default=True,
-    help="GPU to use, zero-based index. Set to -1 to use CPU. CPU is also always used if CUDA or MPS is not available.",
+    help="GPU index (e.g. 0). Use -1 to force CPU. If CUDA is unavailable, CPU is used automatically.",
 )
 @click.option(
     "--patch_size",
@@ -758,10 +758,10 @@ def inference_download(
 )
 @click.option(
     "--num_workers",
-    type=click.IntRange(min=1),
-    default=4,
+    type=click.IntRange(min=0),
+    default=0,
     show_default=True,
-    help="Number of workers to use for inference.",
+    help="DataLoader workers (0 = main process only; avoids multiprocessing issues with some setups).",
 )
 @click.option(
     "--padding",

@@ -42,7 +42,7 @@ def default_preprocess(sample):
     sample["image"] = sample["image"] / 3000
     return sample
 
-
+# Added
 def make_scale_preprocess(max_value: float):
     """Scale 0–max_value input to same range as training (0–10000 then /3000)."""
 
@@ -186,8 +186,12 @@ def run(
         assert os.path.exists(model), f"Model file {model} does not exist."
         model_ckpt_path = model
 
-    # Load task
+    # Load task (large checkpoints can take tens of seconds; avoid interrupting here)
     tic = time.time()
+    print(
+        "Loading model checkpoint (large models may take 1–2 minutes; do not press Ctrl+C)…",
+        flush=True,
+    )
     model, model_type, hparams = load_model_from_checkpoint(model_ckpt_path)
     in_ch = hparams.get("in_channels")
     num_cl = hparams.get("num_classes")
@@ -200,6 +204,7 @@ def run(
         )
     )
     model = model.eval().to(device)
+    print(f"Using device: {device}", flush=True)
 
     if mps_mode:
         up_sample = K.Resize(
@@ -230,6 +235,12 @@ def run(
 
     # Run inference
     input_height, input_width = input_shape[0], input_shape[1]
+    n_batches = len(dataloader)
+    print(
+        f"Starting inference: {n_batches} batch(es), batch_size={batch_size}, "
+        f"num_workers={num_workers}. First batch can be slow.",
+        flush=True,
+    )
     if save_scores:
         out_channels = 3
     else:
@@ -333,9 +344,9 @@ def run(
 
     # Some code to save prediction footprints
     # with fiona.open("inference_footprints.geojson", "w", driver="GeoJSON", crs=profile["crs"], schema={"geometry": "Polygon", "properties": {}}) as dst:
-    #     for geom in inference_geoms:
-    #         dst.write({"geometry": geom, "properties": {}})
-
+        # for geom in inference_geoms:
+            # dst.write({"geometry": geom, "properties": {}})
+# 
     with rasterio.open(input) as src:
         profile = src.profile
         tags = src.tags()

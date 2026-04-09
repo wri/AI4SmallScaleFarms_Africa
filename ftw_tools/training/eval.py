@@ -323,6 +323,9 @@ def test(
         model_path, map_location="cpu"
     )
     model_type = trainer.hparams["model"]
+    # Infer model_predicts_3_classes from checkpoint so 3-class-trained models work without -p3
+    if "num_classes" in trainer.hparams:
+        model_predicts_3_classes = trainer.hparams["num_classes"] == 3
     model = trainer.model.eval().to(device)
     print(f"Model loaded in {time.time() - tic:.2f}s")
 

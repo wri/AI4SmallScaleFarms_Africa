@@ -36,6 +36,10 @@ ENV/
 *.pyo
 *.egg-info/
 
+# Some images for interence testing
+tests/data-files/
+tests/Spot_inference/
+
 # Some extra inference data no one needs
 inference_output/
 
@@ -51,6 +55,10 @@ PRUE_EFNET_B7_finetune/
 PRUE_EFNET_B7_finetune_weight_true/
 PRUE_EFNET_B7_finetune_frozen_backbone/
 PRUE_EFNET_B7_finetune_spot/
-
+PRUE_EFNET_B7_finetune_kenya_rwanda/
+PRUE_EFNET_B7_finetune_s2/
 # Large test imagery (use locally or via DVC/Git LFS if needed)
 tests/Spot_inference/
+
+# New performant Models
+prue_efnetb5_ccby_checkpoint.ckpt

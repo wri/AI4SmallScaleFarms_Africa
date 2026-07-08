@@ -1,0 +1,39 @@
+# Example pipeline configuration.
+# Copy to config.yaml and edit the values for your area of interest.
+# Any field omitted here falls back to the defaults in src/config.py.
+
+# --- Identity / area of interest ---
+area_name: "Nyandarua"            # GAUL ADM2 name used to fetch the boundary
+gaul_dataset: "FAO/GAUL/2015/level2"
+gaul_name_field: "ADM2_NAME"
+# aoi_bbox: [36.2, -0.9, 36.9, -0.1]   # optional [west, south, east, north]
+
+# --- Target label ---
+target_crop_names: ["Maize"]
+crop_columns: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
+target_column: "maize_pos"
+
+# --- Growing season / imagery ---
+start_date: "2024-03-01"
+end_date: "2024-08-31"
+# refdate: "2024-03-01"           # defaults to start_date
+n_harmonics: 2
+
+# --- CRS / geometry ---
+area_calc_epsg: 32636             # UTM zone for planar area (36N = Kenya)
+working_epsg: 4326
+scale: 30
+
+# --- Paths (relative paths are resolved against project_root) ---
+# project_root: "."
+# eetc_path: "eetc"               # cloned https://github.com/shrutijain90/eetc
+survey_geojson: "data/raw/Nyandarua.geojson"
+
+# --- Earth Engine auth ---
+# ee_project: "your-ee-project"
+# ee_service_account_key: "path/to/service-account-key.json"
+ee_high_volume: false
+
+# --- Post-processing ---
+cropland_threshold: 40.0
+probability_threshold: 0.5

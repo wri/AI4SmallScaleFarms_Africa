@@ -1,0 +1,34 @@
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+jupyterlab
+notebook
+ipykernel
+
+# Core geospatial stack (vector + raster)
+geopandas
+shapely
+fiona
+pyproj
+rasterio
+rioxarray
+xarray
+earthpy
+# Mapping and tiling helpers
+folium
+
+# Geospatial utilities and analysis
+geopy
+
+# Earth observation / cloud geospatial workflows
+earthengine-api
+geemap
+
+# Machine learning and data processing
+scikit-learn
+joblib
+
+# Configuration
+pyyaml

@@ -1,0 +1,223 @@
+"""Central configuration for the crop-type-mapping pipeline.
+
+Everything that is specific to an *area of interest* (AOI) lives here so the
+rest of the pipeline can stay generic. Point the pipeline at a new region by
+editing a YAML file (see ``config.example.yaml``) or by constructing a
+``PipelineConfig`` in code -- no changes to the processing modules are needed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import List, Optional, Sequence
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - yaml is optional at import time
+    yaml = None
+
+
+# Default Sentinel-2 (Level-2A) bands/indices produced by the eetc datasource.
+DEFAULT_BANDS: List[str] = [
+    "AEROS", "BLUE", "GREEN", "RED", "RDED1", "RDED2", "RDED3", "NIR",
+    "RDED4", "VAPOR", "SWIR1", "SWIR2", "NBR1", "NDTI", "GCVI", "NDVI", "SNDVI",
+]
+
+# Bands on which harmonic regression coefficients are computed as ML features.
+DEFAULT_REGRESSION_BANDS: List[str] = ["RDED4", "GCVI", "NBR1", "NDTI", "NDVI", "SNDVI"]
+
+# Final feature columns fed to the classifier (must exist in the merged table
+# and in the inference feature image).
+DEFAULT_FEATURE_COLUMNS: List[str] = [
+    "precipitation",
+    "GCVI_constant", "GCVI_cos1", "GCVI_count", "GCVI_mean",
+    "GCVI_r2", "GCVI_rmse", "GCVI_variance",
+    "NBR1_constant", "NBR1_cos1", "NBR1_r2", "NBR1_rmse", "NBR1_variance",
+    "NDTI_cos1", "NDTI_mean", "NDTI_rmse", "NDTI_variance",
+    "NDVI_constant",
+    "RDED4_constant", "RDED4_mean", "RDED4_r2", "RDED4_rmse", "RDED4_variance",
+    "elevation", "slope", "aspect",
+]
+
+
+@dataclass
+class PipelineConfig:
+    """All area-specific and run-specific settings for the pipeline.
+
+    Attributes are grouped by pipeline stage. Anything region specific
+    (``area_name``, ``survey_geojson``, ``aoi_bbox`` ...) should be overridden
+    per run; the sensible geospatial defaults rarely need changing.
+    """
+
+    # --- Identity / area of interest --------------------------------------
+    area_name: str = "Nyandarua"
+    # GAUL admin lookup used to derive the study-area boundary from Earth Engine.
+    gaul_dataset: str = "FAO/GAUL/2015/level2"
+    gaul_name_field: str = "ADM2_NAME"
+    # Optional explicit inference bounding box [west, south, east, north].
+    # If None, the pipeline derives it from the GAUL boundary bounds.
+    aoi_bbox: Optional[Sequence[float]] = None
+
+    # --- Target label -----------------------------------------------------
+    target_crop_names: List[str] = field(default_factory=lambda: ["Maize"])
+    crop_columns: List[str] = field(
+        default_factory=lambda: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
+    )
+    target_column: str = "maize_pos"
+
+    # --- Growing season / imagery -----------------------------------------
+    start_date: str = "2024-03-01"
+    end_date: str = "2024-08-31"
+    # Reference date for harmonic regression (defaults to start_date if None).
+    refdate: Optional[str] = None
+    n_harmonics: int = 2
+
+    # --- CRS / geometry ---------------------------------------------------
+    # CRS used only for planar area computation (default: UTM 36N / Kenya).
+    area_calc_epsg: int = 32636
+    # Working CRS for all analysis / EE interaction.
+    working_epsg: int = 4326
+    # Nominal resolution (metres) for reduceRegions / exports.
+    scale: int = 30
+
+    # --- Bands / features -------------------------------------------------
+    bands: List[str] = field(default_factory=lambda: list(DEFAULT_BANDS))
+    regression_bands: List[str] = field(default_factory=lambda: list(DEFAULT_REGRESSION_BANDS))
+    feature_columns: List[str] = field(default_factory=lambda: list(DEFAULT_FEATURE_COLUMNS))
+
+    # --- Precipitation ----------------------------------------------------
+    precip_dataset: str = "UCSB-CHG/CHIRPS/DAILY"
+    # If None, precipitation is summed over [start_date, end_date].
+    precip_start_date: Optional[str] = None
+    precip_end_date: Optional[str] = None
+
+    # --- Terrain ----------------------------------------------------------
+    srtm_asset: str = "USGS/SRTMGL1_003"
+
+    # --- Cropland mask (post-processing) ----------------------------------
+    cropland_dataset: str = "USGS/GFSAD1000_V1"
+    cropland_threshold: float = 40.0
+    probability_threshold: float = 0.5
+
+    # --- Model ------------------------------------------------------------
+    test_size: float = 0.20
+    random_state: int = 100
+    cv_folds: int = 10
+    rf_param_grid: dict = field(
+        default_factory=lambda: {
+            "rf__n_estimators": [100, 1000, 5000],
+            "rf__criterion": ["gini", "entropy"],
+            "rf__max_depth": [1, 3, 5],
+            "rf__min_samples_split": [2, 5, 10],
+            "rf__random_state": [10],
+        }
+    )
+
+    # --- Paths ------------------------------------------------------------
+    # Project root (directory that contains data/, models/, preprocessing/, src/).
+    project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
+    # Path to the cloned Azzari et al. eetc repo (https://github.com/shrutijain90/eetc).
+    eetc_path: Optional[Path] = None
+    # Survey/training vector file (GeoJSON / shapefile) with crop labels.
+    survey_geojson: Optional[Path] = None
+
+    # --- Earth Engine auth ------------------------------------------------
+    ee_project: Optional[str] = None
+    ee_service_account_key: Optional[str] = None
+    ee_high_volume: bool = False
+
+    # ---------------------------------------------------------------------
+    # Derived paths (data/ layout). Created on demand by ``ensure_dirs``.
+    # ---------------------------------------------------------------------
+    @property
+    def data_dir(self) -> Path:
+        return self.project_root / "data"
+
+    @property
+    def raw_dir(self) -> Path:
+        return self.data_dir / "raw"
+
+    @property
+    def interim_dir(self) -> Path:
+        return self.data_dir / "interim"
+
+    @property
+    def processed_dir(self) -> Path:
+        return self.data_dir / "processed"
+
+    @property
+    def outputs_dir(self) -> Path:
+        return self.data_dir / "outputs"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.project_root / "models"
+
+    @property
+    def reference_date(self) -> str:
+        return self.refdate or self.start_date
+
+    @property
+    def slug(self) -> str:
+        """Filesystem-friendly area identifier used for output filenames."""
+        return self.area_name.strip().lower().replace(" ", "_")
+
+    @property
+    def model_path(self) -> Path:
+        return self.models_dir / f"{self.slug}_rf_best_model.pkl"
+
+    @property
+    def merged_features_path(self) -> Path:
+        return self.processed_dir / f"{self.slug}_merged_features.csv"
+
+    @property
+    def feature_image_path(self) -> Path:
+        return self.outputs_dir / f"{self.slug}_pixel_features_for_rf.tif"
+
+    @property
+    def probability_map_path(self) -> Path:
+        return self.outputs_dir / f"{self.slug}_probability_map.tif"
+
+    @property
+    def classified_map_path(self) -> Path:
+        return self.outputs_dir / f"{self.slug}_classified_map.tif"
+
+    def ensure_dirs(self) -> None:
+        """Create the data/ and models/ directory tree if missing."""
+        for d in (
+            self.raw_dir, self.interim_dir, self.processed_dir,
+            self.outputs_dir, self.models_dir,
+        ):
+            d.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # (De)serialisation helpers
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "PipelineConfig":
+        """Load a config from a YAML file (unknown keys are ignored)."""
+        if yaml is None:
+            raise ImportError("PyYAML is required to load YAML configs. `pip install pyyaml`.")
+        with open(path, "r") as fh:
+            raw = yaml.safe_load(fh) or {}
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "PipelineConfig":
+        valid = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        kwargs = {}
+        for key, value in raw.items():
+            if key not in valid:
+                continue
+            if key in {"project_root", "eetc_path", "survey_geojson"} and value is not None:
+                value = Path(value).expanduser()
+            kwargs[key] = value
+        return cls(**kwargs)
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        for key in ("project_root", "eetc_path", "survey_geojson"):
+            if d.get(key) is not None:
+                d[key] = str(d[key])
+        return d

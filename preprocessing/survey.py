@@ -22,6 +22,7 @@ def load_survey(config: PipelineConfig, path: Optional[str | Path] = None) -> gp
     path = path or config.survey_geojson
     if path is None:
         raise ValueError("No survey file provided. Set `survey_geojson` in the config.")
+    path = config.resolve_path(path) or path
     gdf = gpd.read_file(path)
     if gdf.crs is None:
         gdf = gdf.set_crs(epsg=config.working_epsg)
@@ -41,11 +42,12 @@ def add_target_label(gdf: gpd.GeoDataFrame, config: PipelineConfig) -> gpd.GeoDa
             f"None of the crop columns {config.crop_columns} were found in the survey data. "
             f"Available columns: {list(gdf.columns)}"
         )
-    gdf[config.target_column] = (
-        gdf.loc[:, crop_cols].isin(config.target_crop_names).sum(axis=1)
+    # Case-insensitive: Nyandarua labels include both "Maize" and "maize".
+    targets = {n.lower() for n in config.target_crop_names}
+    matched = gdf.loc[:, crop_cols].apply(
+        lambda col: col.astype(str).str.strip().str.lower().isin(targets)
     )
-    # Clamp to a strict 0/1 label (a plot with the crop in multiple columns is still 1).
-    gdf[config.target_column] = (gdf[config.target_column] > 0).astype(int)
+    gdf[config.target_column] = matched.any(axis=1).astype(int)
     return gdf
 
 

@@ -27,13 +27,21 @@ def get_s2_collection(
     """
     import gee_tools.datasources.sentinel2_2a as s2_2a
 
-    return s2_2a.Sentinel2SR(
+    start = ee.Date(start_date or config.start_date)
+    end = ee.Date(end_date or config.end_date)
+    ds = s2_2a.Sentinel2SR(
         geometry,
-        start_date=ee.Date(start_date or config.start_date),
-        end_date=ee.Date(end_date or config.end_date),
+        start_date=start,
+        end_date=end,
         addVIs=add_vis,
         addCloudMasks=False,
-    ).get_img_coll()
+    )
+    asset = config.s2_sr_asset
+    if ds.name != asset:
+        print(f"Switching Sentinel-2 collection {ds.name} -> {asset}")
+        ds.name = asset
+        ds.build_img_coll(addVIs=add_vis, addCloudMasks=False)
+    return ds.get_img_coll()
 
 
 def mask_clouds_sr(img: ee.Image, bandnames: Sequence[str]) -> ee.Image:

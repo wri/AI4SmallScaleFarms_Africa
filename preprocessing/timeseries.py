@@ -117,7 +117,10 @@ def run_harmonic_regression(
     import harmonics
 
     return harmonics.run_std_regressions(
-        imgcoll.select(bands), bands, refdate=refdate or config.reference_date
+        imgcoll.select(bands),
+        bands,
+        refdate=refdate or config.reference_date,
+        nharmonics=config.n_harmonics,
     )
 
 

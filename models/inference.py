@@ -14,7 +14,111 @@ import ee
 import numpy as np
 
 from src.config import PipelineConfig
+from preprocessing.features import precip_image
 from preprocessing.sentinel import get_masked_collection
+
+
+def _aoi_bounds(aoi: ee.Geometry) -> tuple[float, float, float, float]:
+    coords = aoi.bounds().getInfo()["coordinates"][0]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _tile_bboxes(
+    west: float, south: float, east: float, north: float, tile_deg: float
+) -> list[tuple[float, float, float, float]]:
+    tiles = []
+    y = south
+    while y < north - 1e-9:
+        y2 = min(y + tile_deg, north)
+        x = west
+        while x < east - 1e-9:
+            x2 = min(x + tile_deg, east)
+            tiles.append((x, y, x2, y2))
+            x = x2
+        y = y2
+    return tiles or [(west, south, east, north)]
+
+
+def _get_download_url(image: ee.Image, region: ee.Geometry, config: PipelineConfig) -> str:
+    return image.getDownloadURL(
+        {
+            "scale": config.scale,
+            "crs": f"EPSG:{config.working_epsg}",
+            "region": region,
+            "format": "GEO_TIFF",
+        }
+    )
+
+
+def _retrieve_url(url: str, path: Path) -> Path:
+    import urllib.request
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(url, str(path))
+    if not path.exists() or path.stat().st_size == 0:
+        raise FileNotFoundError(f"Download failed: {path}")
+    return path
+
+
+def _mosaic_geotiffs(tile_paths: list[Path], out_path: Path) -> Path:
+    import rasterio
+    from rasterio.merge import merge
+
+    srcs = [rasterio.open(p) for p in tile_paths]
+    try:
+        mosaic, transform = merge(srcs)
+        profile = srcs[0].profile.copy()
+        profile.update(
+            height=mosaic.shape[1],
+            width=mosaic.shape[2],
+            transform=transform,
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(mosaic)
+    finally:
+        for src in srcs:
+            src.close()
+    return out_path
+
+
+def download_ee_geotiff(
+    image: ee.Image,
+    aoi: ee.Geometry,
+    path: str | Path,
+    config: PipelineConfig,
+) -> Path:
+    """Download an EE image to a local GeoTIFF, tiling if the AOI is too large."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        url = _get_download_url(image, aoi, config)
+        print(f"Downloading -> {path}")
+        _retrieve_url(url, path)
+        print(f"Saved {path} ({path.stat().st_size / 1e6:.2f} MB)")
+        return path
+    except Exception as exc:
+        print(f"Whole-AOI download failed ({exc}); tiling at {config.export_tile_deg} deg")
+
+    west, south, east, north = _aoi_bounds(aoi)
+    bboxes = _tile_bboxes(west, south, east, north, config.export_tile_deg)
+    print(f"Downloading {len(bboxes)} tiles")
+    tile_dir = path.parent / f"{path.stem}_tiles"
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    tile_paths: list[Path] = []
+    for i, (w, s, e, n) in enumerate(bboxes, start=1):
+        tile_geom = ee.Geometry.Rectangle([w, s, e, n], proj="EPSG:4326", geodesic=False)
+        clipped = image.clip(tile_geom)
+        tile_path = tile_dir / f"tile_{i:03d}.tif"
+        print(f"  tile {i}/{len(bboxes)} [{w:.4f},{s:.4f},{e:.4f},{n:.4f}]")
+        url = _get_download_url(clipped, tile_geom, config)
+        _retrieve_url(url, tile_path)
+        tile_paths.append(tile_path)
+    _mosaic_geotiffs(tile_paths, path)
+    print(f"Mosaicked {len(tile_paths)} tiles -> {path} ({path.stat().st_size / 1e6:.2f} MB)")
+    return path
 
 
 def build_feature_image(
@@ -43,20 +147,12 @@ def build_feature_image(
     srtm = ee.Image(config.srtm_asset)
     terrain = ee.Terrain.products(srtm).select(["elevation", "slope", "aspect"])
 
-    start = config.precip_start_date or config.start_date
-    end = config.precip_end_date or config.end_date
-    precip = (
-        ee.ImageCollection(config.precip_dataset)
-        .filterDate(start, end)
-        .filterBounds(aoi)
-        .select("precipitation")
-        .mean()
-        .rename("precipitation")
-    )
+    precip = precip_image(config, aoi=aoi)
 
     feature_img = s2_feature_img.addBands(terrain).addBands(precip).clip(aoi)
-    select_cols = [c for c in config.feature_columns if c in feature_img.bandNames().getInfo()]
-    return feature_img.select(select_cols)
+    # Select in training order without a getInfo() round-trip (that call would
+    # force EE to materialise band names and is slow on large AOIs).
+    return feature_img.select(list(config.feature_columns))
 
 
 def export_feature_image_to_drive(
@@ -79,6 +175,22 @@ def export_feature_image_to_drive(
     task.start()
     print("Export task started:", task.id)
     return task
+
+
+def export_feature_image_local(
+    feature_img: ee.Image,
+    aoi: ee.Geometry,
+    config: PipelineConfig,
+    path: Optional[str | Path] = None,
+) -> Path:
+    """Download the AOI feature image as a GeoTIFF into ``data/outputs/``.
+
+    Tries a single ``getDownloadURL`` first; county-scale AOIs are tiled and
+    mosaicked when that request exceeds Earth Engine's download limit.
+    """
+    return download_ee_geotiff(
+        feature_img.toFloat(), aoi, Path(path or config.feature_image_path), config
+    )
 
 
 def predict_probability_raster(

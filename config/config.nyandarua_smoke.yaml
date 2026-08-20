@@ -1,0 +1,49 @@
+# Small-area Nyandarua end-to-end smoke test.
+# Uses the local county shapefile as the admin boundary (falls back to GAUL
+# ADM2 "Nyandarua" if that file is missing) and a ~4 km box in northern
+# Ndaragwa (14 labelled plots, balanced maize / non-maize).
+
+area_name: "Nyandarua_smoke"
+gaul_dataset: "FAO/GAUL/2015/level2"
+gaul_name_field: "ADM2_NAME"
+gaul_name: "Nyandarua"
+
+# Clip inference (and intersect) to this compact box inside Nyandarua.
+aoi_bbox: [36.47, 0.07, 36.51, 0.10]
+
+boundary_path: "data/raw/Nyandarua/Nyandarua_boundary/Nyandarua.shp"
+survey_geojson: "data/raw/Nyandarua/nyandarua_smoke_subset.geojson"
+
+target_crop_names: ["Maize"]
+crop_columns: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
+target_column: "maize_pos"
+
+start_date: "2024-03-01"
+end_date: "2024-08-31"
+n_harmonics: 2
+precip_reducer: mean
+
+area_calc_epsg: 32636
+working_epsg: 4326
+scale: 30
+
+ee_project: "land-use-project-505711"
+ee_high_volume: false
+
+# GFSAD cropland mask (notebook cell 108); classes 2-6 are cropland.
+cropland_dataset: "USGS/GFSAD1000_V1"
+cropland_band: "landcover"
+cropland_classes: [2, 3, 4, 5, 6]
+cropland_threshold: 40.0
+probability_threshold: 0.5
+
+# Tiny grid so the smoke test spends time on EE, not hyper-parameter search.
+test_size: 0.25
+random_state: 100
+cv_folds: 3
+rf_param_grid:
+  rf__n_estimators: [50]
+  rf__criterion: ["gini"]
+  rf__max_depth: [3]
+  rf__min_samples_split: [2]
+  rf__random_state: [10]

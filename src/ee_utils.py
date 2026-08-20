@@ -67,7 +67,10 @@ def add_eetc_to_path(config: PipelineConfig) -> Path:
             "    git clone https://github.com/shrutijain90/eetc.git\n"
             "and set `eetc_path` in your config."
         )
-    for p in (str(eetc_path), str(eetc_path / "gee_tools")):
-        if p not in sys.path:
-            sys.path.append(p)
+    for p in (str(eetc_path / "gee_tools"), str(eetc_path)):
+        if p in sys.path:
+            sys.path.remove(p)
+    # Repo root first so `import gee_tools` resolves to this clone, not a
+    # stale site-packages copy.
+    sys.path.insert(0, str(eetc_path))
     return eetc_path

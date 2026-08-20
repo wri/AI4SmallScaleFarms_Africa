@@ -3,10 +3,14 @@
 # Any field omitted here falls back to the defaults in src/config.py.
 
 # --- Identity / area of interest ---
-area_name: "Nyandarua"            # GAUL ADM2 name used to fetch the boundary
+area_name: "Nyandarua"            # run label; also the GAUL ADM2 name if gaul_name is omitted
 gaul_dataset: "FAO/GAUL/2015/level2"
 gaul_name_field: "ADM2_NAME"
+# gaul_name: "Nyandarua"          # set when area_name is a run label, not an ADM2 name
 # aoi_bbox: [36.2, -0.9, 36.9, -0.1]   # optional [west, south, east, north]
+# Local county polygon (shapefile / GeoJSON). Used if the file exists;
+# otherwise the pipeline falls back to GAUL (notebook cell 8).
+# boundary_path: "data/raw/Nyandarua/Nyandarua_boundary/Nyandarua.shp"
 
 # --- Target label ---
 target_crop_names: ["Maize"]
@@ -17,7 +21,9 @@ target_column: "maize_pos"
 start_date: "2024-03-01"
 end_date: "2024-08-31"
 # refdate: "2024-03-01"           # defaults to start_date
-n_harmonics: 2
+n_harmonics: 2                    # notebook cells 41 and 95
+s2_sr_asset: "COPERNICUS/S2_SR_HARMONIZED"
+# precip_reducer: mean            # notebook cell 97 (CHIRPS temporal mean)
 
 # --- CRS / geometry ---
 area_calc_epsg: 32636             # UTM zone for planar area (36N = Kenya)
@@ -35,5 +41,9 @@ survey_geojson: "data/raw/Nyandarua.geojson"
 ee_high_volume: false
 
 # --- Post-processing ---
-cropland_threshold: 40.0
+# GFSAD 1 km cropland (notebook cell 108). Classes 2-6 = cropland.
+cropland_dataset: "USGS/GFSAD1000_V1"
+cropland_band: "landcover"
+cropland_classes: [2, 3, 4, 5, 6]
+cropland_threshold: 40.0          # only used if cropland_classes is empty
 probability_threshold: 0.5

@@ -55,9 +55,16 @@ class PipelineConfig:
     # GAUL admin lookup used to derive the study-area boundary from Earth Engine.
     gaul_dataset: str = "FAO/GAUL/2015/level2"
     gaul_name_field: str = "ADM2_NAME"
+    # ADM2 (or other) name passed to the GAUL filter. Defaults to ``area_name``.
+    # Set this when ``area_name`` is a run label (e.g. "Nyandarua_smoke") rather
+    # than the GAUL name ("Nyandarua") — notebook cell 8 uses ADM2_NAME=Nyandarua.
+    gaul_name: Optional[str] = None
     # Optional explicit inference bounding box [west, south, east, north].
-    # If None, the pipeline derives it from the GAUL boundary bounds.
+    # If None, the pipeline derives it from the admin boundary bounds.
     aoi_bbox: Optional[Sequence[float]] = None
+    # Optional local admin-boundary vector (GeoJSON / shapefile). Used when the
+    # file exists; otherwise the pipeline falls back to the GAUL name lookup.
+    boundary_path: Optional[Path] = None
 
     # --- Target label -----------------------------------------------------
     target_crop_names: List[str] = field(default_factory=lambda: ["Maize"])
@@ -72,6 +79,8 @@ class PipelineConfig:
     # Reference date for harmonic regression (defaults to start_date if None).
     refdate: Optional[str] = None
     n_harmonics: int = 2
+    # Sentinel-2 L2A surface-reflectance collection. S2_SR is deprecated.
+    s2_sr_asset: str = "COPERNICUS/S2_SR_HARMONIZED"
 
     # --- CRS / geometry ---------------------------------------------------
     # CRS used only for planar area computation (default: UTM 36N / Kenya).
@@ -88,7 +97,9 @@ class PipelineConfig:
 
     # --- Precipitation ----------------------------------------------------
     precip_dataset: str = "UCSB-CHG/CHIRPS/DAILY"
-    # If None, precipitation is summed over [start_date, end_date].
+    # Temporal reducer over the season. Notebook inference (cell 97) uses mean.
+    precip_reducer: str = "mean"
+    # If None, precipitation is aggregated over [start_date, end_date].
     precip_start_date: Optional[str] = None
     precip_end_date: Optional[str] = None
 
@@ -96,7 +107,12 @@ class PipelineConfig:
     srtm_asset: str = "USGS/SRTMGL1_003"
 
     # --- Cropland mask (post-processing) ----------------------------------
+    # Notebook cell 108: USGS GFSAD 1 km cropland (Image, band "landcover").
+    # Classes 2-6 are cropland; 0=water, 1=non-cropland.
     cropland_dataset: str = "USGS/GFSAD1000_V1"
+    cropland_band: str = "landcover"
+    cropland_classes: List[int] = field(default_factory=lambda: [2, 3, 4, 5, 6])
+    # Used only when cropland_classes is empty (percent-style rasters, cell 111).
     cropland_threshold: float = 40.0
     probability_threshold: float = 0.5
 
@@ -126,6 +142,9 @@ class PipelineConfig:
     ee_project: Optional[str] = None
     ee_service_account_key: Optional[str] = None
     ee_high_volume: bool = False
+    # Max tile width/height (degrees) when downloading GeoTIFFs locally.
+    # getDownloadURL has a size cap; county-scale exports are tiled then mosaicked.
+    export_tile_deg: float = 0.08
 
     # ---------------------------------------------------------------------
     # Derived paths (data/ layout). Created on demand by ``ensure_dirs``.
@@ -172,6 +191,23 @@ class PipelineConfig:
         return self.processed_dir / f"{self.slug}_merged_features.csv"
 
     @property
+    def harmonic_features_path(self) -> Path:
+        return self.processed_dir / f"{self.slug}_harmonic_features.csv"
+
+    @property
+    def terrain_features_path(self) -> Path:
+        return self.processed_dir / f"{self.slug}_terrain_features.csv"
+
+    @property
+    def precip_features_path(self) -> Path:
+        return self.processed_dir / f"{self.slug}_precipitation.csv"
+
+    @property
+    def harmonic_band_dir(self) -> Path:
+        """Per-band harmonic CSVs (local stand-in for the old Drive batches)."""
+        return self.interim_dir / f"{self.slug}_harmonic_bands"
+
+    @property
     def feature_image_path(self) -> Path:
         return self.outputs_dir / f"{self.slug}_pixel_features_for_rf.tif"
 
@@ -182,6 +218,28 @@ class PipelineConfig:
     @property
     def classified_map_path(self) -> Path:
         return self.outputs_dir / f"{self.slug}_classified_map.tif"
+
+    @property
+    def cropland_map_path(self) -> Path:
+        return self.outputs_dir / f"{self.slug}_cropland_mask.tif"
+
+    @property
+    def pipeline_figure_path(self) -> Path:
+        return self.outputs_dir / f"{self.slug}_pipeline_stages.png"
+
+    @property
+    def gaul_lookup_name(self) -> str:
+        """GAUL ADM name: ``gaul_name`` if set, otherwise ``area_name``."""
+        return (self.gaul_name or self.area_name).strip()
+
+    def resolve_path(self, path: Optional[str | Path]) -> Optional[Path]:
+        """Resolve a config path against ``project_root`` when it is relative."""
+        if path is None:
+            return None
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = self.project_root / p
+        return p
 
     def ensure_dirs(self) -> None:
         """Create the data/ and models/ directory tree if missing."""
@@ -210,14 +268,14 @@ class PipelineConfig:
         for key, value in raw.items():
             if key not in valid:
                 continue
-            if key in {"project_root", "eetc_path", "survey_geojson"} and value is not None:
+            if key in {"project_root", "eetc_path", "survey_geojson", "boundary_path"} and value is not None:
                 value = Path(value).expanduser()
             kwargs[key] = value
         return cls(**kwargs)
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        for key in ("project_root", "eetc_path", "survey_geojson"):
+        for key in ("project_root", "eetc_path", "survey_geojson", "boundary_path"):
             if d.get(key) is not None:
                 d[key] = str(d[key])
         return d

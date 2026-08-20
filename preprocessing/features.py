@@ -1,17 +1,14 @@
 """Feature engineering: harmonic coefficients, terrain, precipitation, merge.
 
 Generalises notebook cells 50-82. Produces the per-plot feature table used to
-train the classifier. Two ways to obtain the harmonic-regression features are
-offered:
-
-* ``extract_harmonic_features`` -- computes coefficients per plot in-notebook
-  via ``reduceRegions`` and ``getInfo`` (fine for hundreds of plots).
-* ``export_harmonic_features_to_drive`` + ``concat_band_batches`` -- the batch
-  Drive-export workflow for very large surveys that would otherwise time out.
+train the classifier. Harmonic coefficients are fetched from Earth Engine in
+band batches, written as CSVs under ``data/interim/``, then concatenated into
+``data/processed/<area>_harmonic_features.csv`` — no Google Drive step.
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -46,19 +43,26 @@ def extract_harmonic_features(
 ) -> pd.DataFrame:
     """Compute harmonic-regression coefficients per plot for each band.
 
-    Iterates band-by-band (and plot-batch-by-batch) to stay within EE limits,
-    then joins the per-band tables on ``id_field``.
+    Fetches band-by-band (and plot-batch-by-batch) from Earth Engine, writes
+    one CSV per band under ``config.harmonic_band_dir``, then concatenates
+    them on ``id_field`` into ``config.harmonic_features_path``.
     """
     import harmonics
 
     bands = list(bands or config.regression_bands)
     n = plots.size().getInfo()
+    n_batches = (n + batch_size - 1) // batch_size
+    print(f"Harmonic features: {n} plots, {len(bands)} bands, {n_batches} batches/band")
     plots_list = plots.toList(n)
+    band_dir = config.harmonic_band_dir
+    band_dir.mkdir(parents=True, exist_ok=True)
 
     merged: Optional[pd.DataFrame] = None
     for band in bands:
+        t0 = time.perf_counter()
         coef_img = harmonics.run_std_regressions(
-            imgcoll.select([band]), [band], refdate=config.reference_date
+            imgcoll.select([band]), [band],
+            refdate=config.reference_date, nharmonics=config.n_harmonics,
         )
         band_frames: List[pd.DataFrame] = []
         for i in range(0, n, batch_size):
@@ -67,8 +71,18 @@ def extract_harmonic_features(
         band_df = pd.concat(band_frames, ignore_index=True)
         keep = [c for c in band_df.columns if c.startswith(f"{band}_") or c == id_field]
         band_df = band_df[keep]
+        band_csv = band_dir / f"{band.lower()}.csv"
+        band_df.to_csv(band_csv, index=False)
+        print(f"  {band}: {time.perf_counter() - t0:.1f}s -> {band_csv}")
         merged = band_df if merged is None else merged.merge(band_df, on=id_field, how="inner")
-    return merged if merged is not None else pd.DataFrame()
+
+    if merged is None:
+        return pd.DataFrame()
+    out = config.harmonic_features_path
+    out.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(out, index=False)
+    print(f"Concatenated harmonic features -> {out} ({merged.shape})")
+    return merged
 
 
 def export_harmonic_features_to_drive(
@@ -92,7 +106,8 @@ def export_harmonic_features_to_drive(
     tasks: Dict[str, dict] = {}
     for band in bands:
         coef_img = harmonics.run_std_regressions(
-            imgcoll.select([band]), [band], refdate=config.reference_date
+            imgcoll.select([band]), [band],
+            refdate=config.reference_date, nharmonics=config.n_harmonics,
         )
         for i in range(0, n, batch_size):
             batch_no = i // batch_size + 1
@@ -113,12 +128,18 @@ def export_harmonic_features_to_drive(
     return tasks
 
 
-def concat_band_batches(folder: str | Path, bands: Sequence[str], id_field: str = "fid") -> pd.DataFrame:
-    """Concatenate per-band batch CSVs and merge them side-by-side on ``id_field``."""
+def concat_band_batches(
+    folder: str | Path,
+    bands: Sequence[str],
+    id_field: str = "fid",
+    out_path: Optional[str | Path] = None,
+) -> pd.DataFrame:
+    """Concatenate per-band CSVs (``{band}.csv`` or ``{band}_batch_*.csv``) on ``id_field``."""
     folder = Path(folder)
     merged: Optional[pd.DataFrame] = None
     for band in bands:
-        files = sorted(folder.glob(f"{band.lower()}_batch_*.csv"))
+        prefix = band.lower()
+        files = sorted(folder.glob(f"{prefix}_batch_*.csv")) or sorted(folder.glob(f"{prefix}.csv"))
         if not files:
             print(f"No files found for {band}")
             continue
@@ -130,7 +151,12 @@ def concat_band_batches(folder: str | Path, bands: Sequence[str], id_field: str 
         merged = df if merged is None else merged.merge(
             df, on=id_field, how="inner", suffixes=("", f"_{band.lower()}")
         )
-    return merged if merged is not None else pd.DataFrame()
+    if merged is None:
+        return pd.DataFrame()
+    if out_path is not None:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        merged.to_csv(out_path, index=False)
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -158,31 +184,53 @@ def extract_terrain_features(
         ]
         df = pd.DataFrame(data)
         out = df if out is None else out.merge(df, on=id_field)
-    return out if out is not None else pd.DataFrame()
+    if out is None:
+        return pd.DataFrame()
+    path = config.terrain_features_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(path, index=False)
+    print(f"Terrain features -> {path} ({out.shape})")
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Precipitation features
 # ---------------------------------------------------------------------------
-def extract_precipitation(
-    plots: ee.FeatureCollection, config: PipelineConfig, id_field: str = "fid"
-) -> pd.DataFrame:
-    """Total (summed) precipitation over the season, averaged per plot."""
+def precip_image(
+    config: PipelineConfig, aoi: Optional[ee.Geometry] = None
+) -> ee.Image:
+    """Seasonal CHIRPS image. Notebook inference (cell 97) uses temporal mean."""
     start = config.precip_start_date or config.start_date
     end = config.precip_end_date or config.end_date
-    precip = (
+    coll = (
         ee.ImageCollection(config.precip_dataset)
         .filter(ee.Filter.date(start, end))
         .select("precipitation")
     )
-    tot = precip.reduce(ee.Reducer.sum()).reduceRegions(
+    if aoi is not None:
+        coll = coll.filterBounds(aoi)
+    reducer = (config.precip_reducer or "mean").lower()
+    img = coll.mean() if reducer == "mean" else coll.sum()
+    return img.rename("precipitation")
+
+
+def extract_precipitation(
+    plots: ee.FeatureCollection, config: PipelineConfig, id_field: str = "fid"
+) -> pd.DataFrame:
+    """Seasonal precipitation per plot (temporal mean, then spatial mean)."""
+    tot = precip_image(config).reduceRegions(
         reducer=ee.Reducer.mean(), collection=plots, scale=config.scale
     )
     data = [
         {id_field: f["properties"][id_field], "precipitation": f["properties"].get("mean")}
         for f in tot.getInfo()["features"]
     ]
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    path = config.precip_features_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+    print(f"Precipitation features -> {path} ({df.shape})")
+    return df
 
 
 # ---------------------------------------------------------------------------

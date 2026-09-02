@@ -18,14 +18,30 @@ except Exception:  # pragma: no cover - yaml is optional at import time
     yaml = None
 
 
-# Default Sentinel-2 (Level-2A) bands/indices produced by the eetc datasource.
-DEFAULT_BANDS: List[str] = [
-    "AEROS", "BLUE", "GREEN", "RED", "RDED1", "RDED2", "RDED3", "NIR",
-    "RDED4", "VAPOR", "SWIR1", "SWIR2", "NBR1", "NDTI", "GCVI", "NDVI", "SNDVI",
-]
+# Vegetation indexes (plus red-edge RDED4) used for mapping. Optical bands
+# needed to *compute* these are still loaded inside eetc, then dropped.
+DEFAULT_BANDS: List[str] = ["RDED4", "GCVI", "NBR1", "NDTI", "NDVI", "SNDVI"]
 
 # Bands on which harmonic regression coefficients are computed as ML features.
 DEFAULT_REGRESSION_BANDS: List[str] = ["RDED4", "GCVI", "NBR1", "NDTI", "NDVI", "SNDVI"]
+
+# Typo / synonym map applied to crop labels before counting and collapsing.
+DEFAULT_CROP_ALIASES: dict = {
+    "ovacodo": "avocado",
+    "ovacado": "avocado",
+    "whear": "wheat",
+    "potato": "potatoes",
+    "grasa": "grass",
+    "cyprus": "cypress",
+    "pyrethrumpyrethrum": "pyrethrum",
+    "brocolli": "broccoli",
+}
+
+# Display / raster code order for named classes that survive min_class_count.
+# Remaining frequent classes are appended, then ``other``.
+DEFAULT_PREFERRED_CLASS_ORDER: List[str] = [
+    "maize", "wheat", "potatoes", "grass", "canola", "coffee",
+]
 
 # Final feature columns fed to the classifier (must exist in the merged table
 # and in the inference feature image).
@@ -67,11 +83,25 @@ class PipelineConfig:
     boundary_path: Optional[Path] = None
 
     # --- Target label -----------------------------------------------------
+    # ``binary``: any of ``crop_columns`` matching ``target_crop_names`` -> 0/1.
+    # ``multiclass``: cleaned ``label_column`` (default crop_a); rare classes
+    # collapse to ``other_class_name`` when count < ``min_class_count``.
+    label_mode: str = "binary"
     target_crop_names: List[str] = field(default_factory=lambda: ["Maize"])
     crop_columns: List[str] = field(
         default_factory=lambda: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
     )
     target_column: str = "maize_pos"
+    label_column: str = "crop_a"
+    min_class_count: int = 10
+    other_class_name: str = "other"
+    crop_aliases: dict = field(default_factory=lambda: dict(DEFAULT_CROP_ALIASES))
+    preferred_class_order: List[str] = field(
+        default_factory=lambda: list(DEFAULT_PREFERRED_CLASS_ORDER)
+    )
+    # String label after collapse (multiclass only); integer codes go in ``target_column``.
+    class_name_column: str = "crop_class"
+    raw_label_column: str = "crop_label_raw"
 
     # --- Growing season / imagery -----------------------------------------
     start_date: str = "2024-03-01"
@@ -87,8 +117,11 @@ class PipelineConfig:
     area_calc_epsg: int = 32636
     # Working CRS for all analysis / EE interaction.
     working_epsg: int = 4326
-    # Nominal resolution (metres) for reduceRegions / exports.
+    # Nominal resolution (metres) for reduceRegions / exports / point sampling.
     scale: int = 30
+    # How training locations are sampled from EE images.
+    # ``auto``: points -> one pixel at the GPS (Reducer.first); polygons -> zonal mean.
+    sample_geometry: str = "auto"
 
     # --- Bands / features -------------------------------------------------
     bands: List[str] = field(default_factory=lambda: list(DEFAULT_BANDS))
@@ -120,6 +153,8 @@ class PipelineConfig:
     test_size: float = 0.20
     random_state: int = 100
     cv_folds: int = 10
+    # Passed to RandomForestClassifier (e.g. ``balanced``). None = sklearn default.
+    class_weight: Optional[str] = None
     rf_param_grid: dict = field(
         default_factory=lambda: {
             "rf__n_estimators": [100, 1000, 5000],
@@ -131,20 +166,34 @@ class PipelineConfig:
     )
 
     # --- Paths ------------------------------------------------------------
-    # Project root (directory that contains data/, models/, preprocessing/, src/).
+    # Project root (directory that contains data/, preprocessing/, src/).
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
     # Path to the cloned Azzari et al. eetc repo (https://github.com/shrutijain90/eetc).
     eetc_path: Optional[Path] = None
     # Survey/training vector file (GeoJSON / shapefile) with crop labels.
     survey_geojson: Optional[Path] = None
 
-    # --- Earth Engine auth ------------------------------------------------
-    ee_project: Optional[str] = None
+    # --- Earth Engine auth / request sizing --------------------------------
+    ee_project: Optional[str] = 'land-use-project-505711'
+    # 
     ee_service_account_key: Optional[str] = None
+    # High-volume endpoint is for many small downloads, not heavy compute.
     ee_high_volume: bool = False
-    # Max tile width/height (degrees) when downloading GeoTIFFs locally.
-    # getDownloadURL has a size cap; county-scale exports are tiled then mosaicked.
+    # Plots per interactive harmonic request. None = all plots in one call.
+    harmonic_batch_size: Optional[int] = None
+    # EE ``tileScale`` for ``reduceRegions`` (4-16 uses less memory per tile).
+    harmonic_tile_scale: int = 4
+    # Reuse CSVs / EE assets / local GeoTIFFs instead of re-running Earth Engine.
+    reuse_ee_features: bool = True
+    # Optional EE asset id for the county-wide feature image. Defaults to
+    # projects/<ee_project>/assets/<slug>_pixel_features_for_rf.
+    ee_feature_asset: Optional[str] = None
+    # Poll interval while a batch Export.image.toAsset is running.
+    export_poll_seconds: int = 45
+    # Tile width/height (degrees) when pulling a *materialized* GeoTIFF locally.
+    # Tiles that do not intersect the county polygon are skipped.
     export_tile_deg: float = 0.08
+    export_min_tile_deg: float = 0.02
 
     # ---------------------------------------------------------------------
     # Derived paths (data/ layout). Created on demand by ``ensure_dirs``.
@@ -171,7 +220,8 @@ class PipelineConfig:
 
     @property
     def models_dir(self) -> Path:
-        return self.project_root / "models"
+        """Fitted pickles and metrics live under ``data/models/`` (not the Python package)."""
+        return self.data_dir / "models"
 
     @property
     def reference_date(self) -> str:
@@ -185,6 +235,15 @@ class PipelineConfig:
     @property
     def model_path(self) -> Path:
         return self.models_dir / f"{self.slug}_rf_best_model.pkl"
+
+    @property
+    def metrics_path(self) -> Path:
+        return self.models_dir / f"{self.slug}_rf_metrics.json"
+
+    @property
+    def metrics_index_path(self) -> Path:
+        """One-row-per-area table for comparing trained models."""
+        return self.models_dir / "model_comparison.csv"
 
     @property
     def merged_features_path(self) -> Path:
@@ -212,6 +271,14 @@ class PipelineConfig:
         return self.outputs_dir / f"{self.slug}_pixel_features_for_rf.tif"
 
     @property
+    def feature_asset_id(self) -> str:
+        """Earth Engine asset used to materialize the county-wide feature image."""
+        if self.ee_feature_asset:
+            return self.ee_feature_asset
+        project = self.ee_project or "earthengine-legacy"
+        return f"projects/{project}/assets/{self.slug}_pixel_features_for_rf"
+
+    @property
     def probability_map_path(self) -> Path:
         return self.outputs_dir / f"{self.slug}_probability_map.tif"
 
@@ -232,6 +299,11 @@ class PipelineConfig:
         """GAUL ADM name: ``gaul_name`` if set, otherwise ``area_name``."""
         return (self.gaul_name or self.area_name).strip()
 
+    @property
+    def is_binary(self) -> bool:
+        """True for the Nyandarua-style maize vs other classifier."""
+        return str(self.label_mode or "binary").strip().lower() == "binary"
+
     def resolve_path(self, path: Optional[str | Path]) -> Optional[Path]:
         """Resolve a config path against ``project_root`` when it is relative."""
         if path is None:
@@ -242,7 +314,7 @@ class PipelineConfig:
         return p
 
     def ensure_dirs(self) -> None:
-        """Create the data/ and models/ directory tree if missing."""
+        """Create the data/ directory tree if missing."""
         for d in (
             self.raw_dir, self.interim_dir, self.processed_dir,
             self.outputs_dir, self.models_dir,

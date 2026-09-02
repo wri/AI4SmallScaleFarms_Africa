@@ -1,0 +1,69 @@
+{
+  "area_name": "Nyandarua",
+  "slug": "nyandarua",
+  "trained_at": "2026-09-02T13:19:00Z",
+  "target_column": "maize_pos",
+  "n_train": 128,
+  "n_test": 33,
+  "n_features": 26,
+  "test_size": 0.2,
+  "cv_folds": 10,
+  "cv_accuracy": 0.9070512820512819,
+  "test": {
+    "accuracy": 0.9090909090909091,
+    "precision": 0.90625,
+    "recall": 1.0,
+    "f1": 0.9508196721311475,
+    "confusion_matrix": [
+      [
+        1,
+        3
+      ],
+      [
+        0,
+        29
+      ]
+    ]
+  },
+  "accuracy": 0.9090909090909091,
+  "best_params": {
+    "rf__criterion": "entropy",
+    "rf__max_depth": 5,
+    "rf__min_samples_split": 2,
+    "rf__n_estimators": 5000,
+    "rf__random_state": 10
+  },
+  "feature_columns": [
+    "precipitation",
+    "GCVI_constant",
+    "GCVI_cos1",
+    "GCVI_count",
+    "GCVI_mean",
+    "GCVI_r2",
+    "GCVI_rmse",
+    "GCVI_variance",
+    "NBR1_constant",
+    "NBR1_cos1",
+    "NBR1_r2",
+    "NBR1_rmse",
+    "NBR1_variance",
+    "NDTI_cos1",
+    "NDTI_mean",
+    "NDTI_rmse",
+    "NDTI_variance",
+    "NDVI_constant",
+    "RDED4_constant",
+    "RDED4_mean",
+    "RDED4_r2",
+    "RDED4_rmse",
+    "RDED4_variance",
+    "elevation",
+    "slope",
+    "aspect"
+  ],
+  "start_date": "2024-03-01",
+  "end_date": "2024-08-31",
+  "n_harmonics": 2,
+  "scale": 30,
+  "model_path": "/Users/christine.muthee/Documents/AI4SmallScaleFarms_Africa/data/models/nyandarua_rf_best_model.pkl"
+}

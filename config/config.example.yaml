@@ -13,9 +13,17 @@ gaul_name_field: "ADM2_NAME"
 # boundary_path: "data/raw/Nyandarua/Nyandarua_boundary/Nyandarua.shp"
 
 # --- Target label ---
+# binary (default): maize vs other from any crop_* column.
+# multiclass: cleaned crop_a, rare classes collapsed to other.
+label_mode: binary
 target_crop_names: ["Maize"]
 crop_columns: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
 target_column: "maize_pos"
+# label_column: crop_a          # multiclass source column
+# min_class_count: 10
+# other_class_name: other
+# sample_geometry: auto         # auto | point | polygon
+# class_weight: balanced        # optional RF class_weight
 
 # --- Growing season / imagery ---
 start_date: "2024-03-01"
@@ -39,6 +47,10 @@ survey_geojson: "data/raw/Nyandarua.geojson"
 # ee_project: "your-ee-project"
 # ee_service_account_key: "path/to/service-account-key.json"
 ee_high_volume: false
+# reuse_ee_features: true         # skip EE when CSVs / the feature asset exist
+# County-wide features are batch-exported to:
+#   projects/<ee_project>/assets/<area>_pixel_features_for_rf
+# then tiled locally (tiles that miss the county polygon are skipped).
 
 # --- Post-processing ---
 # GFSAD 1 km cropland (notebook cell 108). Classes 2-6 = cropland.

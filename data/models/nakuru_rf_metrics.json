@@ -1,0 +1,192 @@
+{
+  "area_name": "Nakuru",
+  "slug": "nakuru",
+  "trained_at": "2026-09-02T15:21:34Z",
+  "label_mode": "multiclass",
+  "target_column": "crop_class_code",
+  "n_train": 245,
+  "n_test": 62,
+  "n_features": 26,
+  "n_classes": 7,
+  "class_codes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "class_names": [
+    "maize",
+    "wheat",
+    "potatoes",
+    "grass",
+    "canola",
+    "coffee",
+    "other"
+  ],
+  "test_size": 0.2,
+  "cv_folds": 5,
+  "cv_accuracy": 0.5265306122448979,
+  "test": {
+    "accuracy": 0.4032258064516129,
+    "precision": 0.2496919746919747,
+    "recall": 0.37647690655209454,
+    "f1": 0.2645320197044335,
+    "confusion_matrix": [
+      [
+        16,
+        8,
+        4,
+        2,
+        0,
+        3,
+        5
+      ],
+      [
+        1,
+        4,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        2,
+        0,
+        1,
+        0,
+        1
+      ],
+      [
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        0
+      ],
+      [
+        2,
+        0,
+        3,
+        0,
+        0,
+        1,
+        1
+      ]
+    ],
+    "precision_weighted": 0.561657831415896,
+    "recall_weighted": 0.4032258064516129,
+    "f1_weighted": 0.4317018909899889,
+    "per_class": {
+      "maize": {
+        "precision": 0.8,
+        "recall": 0.42105263157894735,
+        "f1": 0.5517241379310345,
+        "support": 38
+      },
+      "wheat": {
+        "precision": 0.3076923076923077,
+        "recall": 0.5714285714285714,
+        "f1": 0.4,
+        "support": 7
+      },
+      "potatoes": {
+        "precision": 0.18181818181818182,
+        "recall": 0.5,
+        "f1": 0.26666666666666666,
+        "support": 4
+      },
+      "grass": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 2
+      },
+      "canola": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 2
+      },
+      "coffee": {
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "support": 2
+      },
+      "other": {
+        "precision": 0.125,
+        "recall": 0.14285714285714285,
+        "f1": 0.13333333333333333,
+        "support": 7
+      }
+    }
+  },
+  "accuracy": 0.4032258064516129,
+  "best_params": {
+    "rf__criterion": "entropy",
+    "rf__max_depth": 5,
+    "rf__min_samples_split": 5,
+    "rf__n_estimators": 100,
+    "rf__random_state": 10
+  },
+  "feature_columns": [
+    "precipitation",
+    "GCVI_constant",
+    "GCVI_cos1",
+    "GCVI_count",
+    "GCVI_mean",
+    "GCVI_r2",
+    "GCVI_rmse",
+    "GCVI_variance",
+    "NBR1_constant",
+    "NBR1_cos1",
+    "NBR1_r2",
+    "NBR1_rmse",
+    "NBR1_variance",
+    "NDTI_cos1",
+    "NDTI_mean",
+    "NDTI_rmse",
+    "NDTI_variance",
+    "NDVI_constant",
+    "RDED4_constant",
+    "RDED4_mean",
+    "RDED4_r2",
+    "RDED4_rmse",
+    "RDED4_variance",
+    "elevation",
+    "slope",
+    "aspect"
+  ],
+  "start_date": "2024-03-01",
+  "end_date": "2024-08-31",
+  "n_harmonics": 2,
+  "scale": 30,
+  "class_weight": "balanced",
+  "model_path": "/Users/christine.muthee/Documents/AI4SmallScaleFarms_Africa/data/models/nakuru_rf_best_model.pkl"
+}

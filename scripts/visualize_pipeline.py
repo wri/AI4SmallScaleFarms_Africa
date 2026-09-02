@@ -8,6 +8,7 @@ Example::
 
     python scripts/visualize_pipeline.py --config config/config.nyandarua_smoke.yaml
     python scripts/visualize_pipeline.py --config config/config.nyandarua.yaml
+    python scripts/visualize_pipeline.py --config config/config.nakuru.yaml
 """
 
 from __future__ import annotations

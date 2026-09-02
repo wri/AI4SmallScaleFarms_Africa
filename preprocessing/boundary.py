@@ -99,16 +99,16 @@ def boundary_from_survey(gdf: gpd.GeoDataFrame) -> ee.Feature:
 def get_aoi(config: PipelineConfig, boundary: Optional[ee.Feature] = None) -> ee.Geometry:
     """Return the inference AOI geometry.
 
-    Uses ``config.aoi_bbox`` when provided, otherwise the bounds of the admin
-    boundary. This is the region over which the wall-to-wall feature image is
-    exported and classified.
+    Uses ``config.aoi_bbox`` when provided, otherwise the admin polygon itself
+    (not its envelope). The envelope would pull in extra land and extra
+    Sentinel-2 tiles during wall-to-wall export.
     """
     if config.aoi_bbox is not None:
         rect = ee.Geometry.Rectangle(list(config.aoi_bbox))
         boundary = boundary or get_admin_boundary(config)
         return rect.intersection(boundary.geometry(), 1)
     boundary = boundary or get_admin_boundary(config)
-    return boundary.geometry().bounds()
+    return boundary.geometry()
 
 
 def survey_to_ee(gdf: gpd.GeoDataFrame, columns: Optional[Sequence[str]] = None) -> ee.FeatureCollection:

@@ -21,6 +21,7 @@ data/processed/*
 data/outputs/*
 data/raw/*
 !data/**/.gitkeep
+data/models/*.pkl
 
 # Large geospatial / tabular outputs
 *.tif
@@ -28,6 +29,11 @@ data/raw/*
 *.pkl
 *.csv
 *.geojson
+
+# Keep model comparison artefacts (pickles stay ignored).
+!data/models/.gitkeep
+!data/models/*.json
+!data/models/*.csv
 
 # OS files
 .DS_Store

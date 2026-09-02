@@ -1,0 +1,5 @@
+{
+  "include": ["src", "preprocessing", "models", "scripts", "run_pipeline.py"],
+  "extraPaths": ["eetc"],
+  "reportMissingImports": "warning"
+}

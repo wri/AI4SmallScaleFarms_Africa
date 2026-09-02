@@ -13,6 +13,22 @@ Build the per-plot feature table and train::
 Download the AOI feature GeoTIFF into data/outputs/ then classify::
 
     python run_pipeline.py infer --config config.yaml
+
+County-wide features are batch-exported to an Earth Engine asset, then tiled
+locally (only tiles that intersect the county polygon)::
+
+    python run_pipeline.py export-features --config config/config.nyandarua.yaml
+
+Train a new multiclass model on Nakuru point labels (do not reuse the
+Nyandarua maize pickle)::
+
+    python run_pipeline.py train --config config/config.nakuru.yaml
+
+Apply a model trained in one area to another area's feature image (same
+label mode and feature recipe)::
+
+    python run_pipeline.py infer --config config/config.nyandarua.yaml \\
+        --model data/models/nyandarua_rf_best_model.pkl
 """
 
 from __future__ import annotations
@@ -38,6 +54,11 @@ def main() -> None:
     )
     parser.add_argument("--config", help="Path to a YAML config file")
     parser.add_argument("--survey", help="Override survey GeoJSON path")
+    parser.add_argument(
+        "--model",
+        help="Path to a trained Random Forest .pkl (infer). Use this to apply "
+        "a model trained in one area to features from another.",
+    )
     parser.add_argument("--feature-tif", help="Path to an existing AOI feature GeoTIFF (infer stage)")
     parser.add_argument(
         "--drive",
@@ -61,7 +82,7 @@ def main() -> None:
         pipeline.export_inference_features(local=local)
         pipeline.print_timings()
     elif args.stage == "infer":
-        pipeline.run_inference(feature_tif=args.feature_tif)
+        pipeline.run_inference(feature_tif=args.feature_tif, model_path=args.model)
         pipeline.print_timings()
     elif args.stage == "all":
         pipeline.run_all(survey_path=args.survey, local=local)

@@ -43,6 +43,7 @@ AI4SmallScaleFarms_Africa/
     ├── raw/                          # survey GeoJSON + optional county shapefile
     ├── interim/                      # per-band harmonic CSVs
     ├── processed/                    # concatenated + merged feature tables
+    ├── models/                       # RF pickles + metrics JSON / comparison CSV
     └── outputs/                      # GeoTIFFs, classified map, PNG figure
 ```
 
@@ -158,7 +159,7 @@ much longer, especially the wall-to-wall GeoTIFF.
    - CHIRPS seasonal **mean** (notebook inference cell 97) → `..._precipitation.csv`
    - merge on `fid` → `data/processed/<area>_merged_features.csv`
 5. **Train** (`models/train.py`) — stratified split, Random Forest grid search,
-   `models/<area>_rf_best_model.pkl`.
+   `data/models/<area>_rf_best_model.pkl` plus metrics JSON.
 6. **Inference image** (`models/inference.py`) — same feature recipe at every
    30 m pixel → `data/outputs/<area>_pixel_features_for_rf.tif`.
 7. **Post-process** (`models/postprocess.py`) — GFSAD1000 cropland (classes
@@ -202,7 +203,9 @@ python scripts/prepare_nyandarua_smoke.py
 | `data/processed/<area>_terrain_features.csv` | Elevation, slope, aspect |
 | `data/processed/<area>_precipitation.csv` | Seasonal CHIRPS mean |
 | `data/processed/<area>_merged_features.csv` | Training table (survey + features) |
-| `models/<area>_rf_best_model.pkl` | Fitted Random Forest |
+| `data/models/<area>_rf_best_model.pkl` | Fitted Random Forest |
+| `data/models/<area>_rf_metrics.json` | Test/CV accuracy, precision, recall, F1 |
+| `data/models/model_comparison.csv` | One row per trained area |
 | `data/outputs/<area>_pixel_features_for_rf.tif` | Wall-to-wall feature stack |
 | `data/outputs/<area>_cropland_mask.tif` | GFSAD binary cropland |
 | `data/outputs/<area>_probability_map.tif` | P(target crop) |

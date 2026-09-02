@@ -114,7 +114,9 @@ def run_harmonic_regression(
     refdate: Optional[str] = None,
 ) -> ee.Image:
     """Fit harmonic regression, returning an image of coefficients per band."""
-    import harmonics
+    from src.ee_utils import import_harmonics
+
+    harmonics = import_harmonics()
 
     return harmonics.run_std_regressions(
         imgcoll.select(bands),
@@ -132,7 +134,9 @@ def fit_harmonics(
     refdate: Optional[str] = None,
 ) -> ee.ImageCollection:
     """Produce smoothed values by fitting the harmonic model to a collection."""
-    import harmonics
+    from src.ee_utils import import_harmonics
+
+    harmonics = import_harmonics()
 
     return harmonics.fit_harmonics(
         coef_img,

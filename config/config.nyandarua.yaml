@@ -1,6 +1,6 @@
 # Full Nyandarua county production config.
 # Local shapefile if present; otherwise GAUL ADM2 "Nyandarua".
-# Inference covers the county bounds (tiled local GeoTIFF download).
+# Inference covers the county polygon (batch EE asset, then tiled GeoTIFF).
 
 area_name: "Nyandarua"
 gaul_dataset: "FAO/GAUL/2015/level2"
@@ -13,6 +13,7 @@ survey_geojson: "data/raw/Nyandarua/Nyandarua_Labels/Nyandarua.geojson"
 target_crop_names: ["Maize"]
 crop_columns: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
 target_column: "maize_pos"
+label_mode: binary
 
 start_date: "2024-03-01"
 end_date: "2024-08-31"
@@ -22,10 +23,12 @@ precip_reducer: mean
 area_calc_epsg: 32636
 working_epsg: 4326
 scale: 30
+# Local GeoTIFF tiles of the *materialized* feature image (county polygon only).
 export_tile_deg: 0.08
 
 ee_project: "land-use-project-505711"
 ee_high_volume: false
+reuse_ee_features: true
 
 cropland_dataset: "USGS/GFSAD1000_V1"
 cropland_band: "landcover"

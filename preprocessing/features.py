@@ -18,19 +18,137 @@ import pandas as pd
 
 from src.config import PipelineConfig
 
+_RATE_LIMIT_MARKERS = (
+    "user request limit",
+    "quota exceeded",
+    "rate limit",
+    "concurrent request",
+    "limit exceeded",
+    "429",
+)
+_COMPUTE_LIMIT_MARKERS = (
+    "memory",
+    "timed out",
+    "timeout",
+    "computation exceeded",
+    "too many concurrent aggregations",
+    "user memory",
+)
+
+
+def _ee_msg(exc: BaseException) -> str:
+    return str(exc).lower()
+
+
+def _is_compute_limit(exc: BaseException) -> bool:
+    msg = _ee_msg(exc)
+    return any(marker in msg for marker in _COMPUTE_LIMIT_MARKERS)
+
+
+def _is_rate_limit(exc: BaseException) -> bool:
+    msg = _ee_msg(exc)
+    if "memory" in msg:
+        return False
+    return any(marker in msg for marker in _RATE_LIMIT_MARKERS)
+
+
+def _cached_csv(path: Path, enabled: bool) -> Optional[pd.DataFrame]:
+    if enabled and path.exists():
+        print(f"Reusing cached features -> {path}")
+        return pd.read_csv(path)
+    return None
+
+
+def _image_reducer(sample_geometry: str) -> ee.Reducer:
+    """Zonal mean inside polygons; the 30 m pixel under a GPS point."""
+    if sample_geometry == "point":
+        return ee.Reducer.first()
+    return ee.Reducer.mean()
+
+
+def _sampled_value(props: dict, band_name: str):
+    """Value from reduceRegions (mean/first) or sampleRegions (band name)."""
+    if band_name in props and props[band_name] is not None:
+        return props[band_name]
+    for key in ("mean", "first"):
+        if key in props:
+            return props[key]
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Harmonic regression coefficients per plot
 # ---------------------------------------------------------------------------
 def _reduce_to_df(
-    image: ee.Image, plots: ee.FeatureCollection, id_field: str, scale: int
+    image: ee.Image,
+    plots: ee.FeatureCollection,
+    scale: int,
+    tile_scale: int,
+    retries: int = 5,
+    sample_geometry: str = "polygon",
 ) -> pd.DataFrame:
-    """Reduce an image over each plot and return properties as a DataFrame."""
+    """Reduce an image over each labelled geometry and return properties as a DataFrame."""
     reduced = image.reduceRegions(
-        reducer=ee.Reducer.mean(), collection=plots, scale=scale
+        reducer=_image_reducer(sample_geometry),
+        collection=plots,
+        scale=scale,
+        tileScale=tile_scale,
     )
-    features = reduced.getInfo()["features"]
-    return pd.DataFrame([f["properties"] for f in features])
+    delay = 8.0
+    last_exc: Optional[BaseException] = None
+    for attempt in range(retries):
+        try:
+            features = reduced.getInfo()["features"]
+            return pd.DataFrame([f["properties"] for f in features])
+        except Exception as exc:
+            last_exc = exc
+            if _is_rate_limit(exc) and attempt < retries - 1:
+                print(f"    EE user/rate limit ({exc}); retry in {delay:.0f}s")
+                time.sleep(delay)
+                delay = min(delay * 2, 120.0)
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("reduceRegions failed")  # pragma: no cover
+
+
+def _reduce_range(
+    image: ee.Image,
+    plots_list: ee.List,
+    start: int,
+    end: int,
+    scale: int,
+    tile_scale: int,
+    max_tile_scale: int = 16,
+    sample_geometry: str = "polygon",
+) -> pd.DataFrame:
+    """Reduce plots ``[start, end)``, splitting on Earth Engine compute limits."""
+    n = end - start
+    batch = ee.FeatureCollection(plots_list.slice(start, end))
+    try:
+        print(f"    plots {start + 1}-{end} (n={n}, tileScale={tile_scale})")
+        return _reduce_to_df(
+            image, batch, scale, tile_scale, sample_geometry=sample_geometry
+        )
+    except Exception as exc:
+        if _is_compute_limit(exc) and n > 1:
+            mid = start + n // 2
+            next_ts = min(max(tile_scale * 2, 4), max_tile_scale)
+            print(
+                f"    compute limit on {n} plots ({exc}); "
+                f"splitting {start}:{end} with tileScale={next_ts}"
+            )
+            left = _reduce_range(
+                image, plots_list, start, mid, scale, next_ts, max_tile_scale,
+                sample_geometry=sample_geometry,
+            )
+            right = _reduce_range(
+                image, plots_list, mid, end, scale, next_ts, max_tile_scale,
+                sample_geometry=sample_geometry,
+            )
+            return pd.concat([left, right], ignore_index=True)
+        raise
 
 
 def extract_harmonic_features(
@@ -39,41 +157,89 @@ def extract_harmonic_features(
     config: PipelineConfig,
     bands: Optional[Sequence[str]] = None,
     id_field: str = "fid",
-    batch_size: int = 8,
+    batch_size: Optional[int] = None,
+    aoi: Optional[ee.Geometry] = None,
+    sample_geometry: str = "polygon",
 ) -> pd.DataFrame:
-    """Compute harmonic-regression coefficients per plot for each band.
+    """Sample county-wide harmonic coefficients at each training location.
 
-    Fetches band-by-band (and plot-batch-by-batch) from Earth Engine, writes
-    one CSV per band under ``config.harmonic_band_dir``, then concatenates
-    them on ``id_field`` into ``config.harmonic_features_path``.
+    Polygons use a zonal mean; points use the 30 m pixel under the GPS
+    (``ee.Reducer.first``). The coefficient image is county-wide (clipped to
+    ``aoi`` when given, never to the labelled geometries).
+    Per-band CSVs under ``config.harmonic_band_dir`` are reused on resume.
     """
-    import harmonics
+    cached = _cached_csv(config.harmonic_features_path, config.reuse_ee_features)
+    if cached is not None:
+        return cached
+
+    from src.ee_utils import import_harmonics
+
+    harmonics = import_harmonics()
 
     bands = list(bands or config.regression_bands)
-    n = plots.size().getInfo()
-    n_batches = (n + batch_size - 1) // batch_size
-    print(f"Harmonic features: {n} plots, {len(bands)} bands, {n_batches} batches/band")
-    plots_list = plots.toList(n)
+    tile_scale = max(int(config.harmonic_tile_scale), 1)
+    chunk = batch_size if batch_size is not None else config.harmonic_batch_size
     band_dir = config.harmonic_band_dir
     band_dir.mkdir(parents=True, exist_ok=True)
 
+    cached_bands: Dict[str, pd.DataFrame] = {}
+    missing: List[str] = []
+    for band in bands:
+        band_csv = band_dir / f"{band.lower()}.csv"
+        if config.reuse_ee_features and band_csv.exists():
+            print(f"  {band}: reuse {band_csv}")
+            cached_bands[band] = pd.read_csv(band_csv)
+        else:
+            missing.append(band)
+
+    n: Optional[int] = None
+    plots_list: Optional[ee.List] = None
+    if missing:
+        n = int(plots.size().getInfo())
+        if chunk is None or chunk <= 0 or chunk >= n:
+            chunk_n = n
+        else:
+            chunk_n = int(chunk)
+        n_batches = (n + chunk_n - 1) // chunk_n
+        how = "pixel-at-point (first)" if sample_geometry == "point" else "polygon zonal mean"
+        print(
+            f"Harmonic features: {n} locations ({how}), {len(bands)} bands "
+            f"({len(missing)} to fetch), {n_batches} request(s)/band, "
+            f"tileScale={tile_scale}"
+        )
+        imgcoll = imgcoll.select(missing)
+        plots_list = plots.toList(n)
+
     merged: Optional[pd.DataFrame] = None
     for band in bands:
-        t0 = time.perf_counter()
-        coef_img = harmonics.run_std_regressions(
-            imgcoll.select([band]), [band],
-            refdate=config.reference_date, nharmonics=config.n_harmonics,
-        )
-        band_frames: List[pd.DataFrame] = []
-        for i in range(0, n, batch_size):
-            batch = ee.FeatureCollection(plots_list.slice(i, i + batch_size))
-            band_frames.append(_reduce_to_df(coef_img, batch, id_field, config.scale))
-        band_df = pd.concat(band_frames, ignore_index=True)
-        keep = [c for c in band_df.columns if c.startswith(f"{band}_") or c == id_field]
-        band_df = band_df[keep]
-        band_csv = band_dir / f"{band.lower()}.csv"
-        band_df.to_csv(band_csv, index=False)
-        print(f"  {band}: {time.perf_counter() - t0:.1f}s -> {band_csv}")
+        if band in cached_bands:
+            band_df = cached_bands[band]
+        else:
+            assert n is not None and plots_list is not None
+            t0 = time.perf_counter()
+            coef_img = harmonics.run_std_regressions(
+                imgcoll.select([band]), [band],
+                refdate=config.reference_date, nharmonics=config.n_harmonics,
+            )
+            if aoi is not None:
+                coef_img = coef_img.clip(aoi)
+            if chunk is None or chunk <= 0 or chunk >= n:
+                step = n
+            else:
+                step = int(chunk)
+            frames = [
+                _reduce_range(
+                    coef_img, plots_list, i, min(i + step, n),
+                    config.scale, tile_scale, sample_geometry=sample_geometry,
+                )
+                for i in range(0, n, step)
+            ]
+            band_df = pd.concat(frames, ignore_index=True)
+            keep = [c for c in band_df.columns if c.startswith(f"{band}_") or c == id_field]
+            band_df = band_df[keep]
+            band_csv = band_dir / f"{band.lower()}.csv"
+            band_df.to_csv(band_csv, index=False)
+            print(f"  {band}: {time.perf_counter() - t0:.1f}s -> {band_csv}")
         merged = band_df if merged is None else merged.merge(band_df, on=id_field, how="inner")
 
     if merged is None:
@@ -92,13 +258,16 @@ def export_harmonic_features_to_drive(
     bands: Optional[Sequence[str]] = None,
     folder: str = "GEE_Exports_All_Bands",
     batch_size: int = 5,
+    sample_geometry: str = "polygon",
 ) -> Dict[str, dict]:
     """Start batched Drive exports of harmonic coefficients (large surveys).
 
     Returns a dict of task-id -> metadata. Download the resulting CSVs and
     recombine with ``concat_band_batches``.
     """
-    import harmonics
+    from src.ee_utils import import_harmonics
+
+    harmonics = import_harmonics()
 
     bands = list(bands or config.regression_bands)
     n = plots.size().getInfo()
@@ -113,7 +282,9 @@ def export_harmonic_features_to_drive(
             batch_no = i // batch_size + 1
             batch = ee.FeatureCollection(plots_list.slice(i, i + batch_size))
             results = coef_img.reduceRegions(
-                reducer=ee.Reducer.mean(), collection=batch, scale=config.scale
+                reducer=_image_reducer(sample_geometry),
+                collection=batch,
+                scale=config.scale,
             )
             task = ee.batch.Export.table.toDrive(
                 collection=results,
@@ -148,9 +319,7 @@ def concat_band_batches(
             raise KeyError(f"'{id_field}' column not found in {band} files")
         cols = [c for c in df.columns if c != id_field]
         df = df[[id_field] + cols]
-        merged = df if merged is None else merged.merge(
-            df, on=id_field, how="inner", suffixes=("", f"_{band.lower()}")
-        )
+        merged = df if merged is None else merged.merge(df, on=id_field, how="inner", suffixes=("", f"_{band.lower()}"))
     if merged is None:
         return pd.DataFrame()
     if out_path is not None:
@@ -163,9 +332,15 @@ def concat_band_batches(
 # Terrain features
 # ---------------------------------------------------------------------------
 def extract_terrain_features(
-    plots: ee.FeatureCollection, config: PipelineConfig, id_field: str = "fid"
+    plots: ee.FeatureCollection,
+    config: PipelineConfig,
+    id_field: str = "fid",
+    sample_geometry: str = "polygon",
 ) -> pd.DataFrame:
-    """Mean elevation, slope and aspect per plot from SRTM."""
+    """Elevation, slope and aspect per labelled geometry from SRTM."""
+    cached = _cached_csv(config.terrain_features_path, config.reuse_ee_features)
+    if cached is not None:
+        return cached
     srtm = ee.Image(config.srtm_asset)
     elevation = srtm.select("elevation")
     measures = {
@@ -173,14 +348,18 @@ def extract_terrain_features(
         "slope": ee.Terrain.slope(elevation),
         "aspect": ee.Terrain.aspect(elevation),
     }
+    reducer = _image_reducer(sample_geometry)
     out: Optional[pd.DataFrame] = None
     for label, img in measures.items():
-        means = img.reduceRegions(
-            reducer=ee.Reducer.mean(), collection=plots, scale=config.scale
+        sampled = img.reduceRegions(
+            reducer=reducer, collection=plots, scale=config.scale
         )
         data = [
-            {id_field: f["properties"][id_field], label: f["properties"].get("mean")}
-            for f in means.getInfo()["features"]
+            {
+                id_field: f["properties"][id_field],
+                label: _sampled_value(f["properties"], label),
+            }
+            for f in sampled.getInfo()["features"]
         ]
         df = pd.DataFrame(data)
         out = df if out is None else out.merge(df, on=id_field)
@@ -215,14 +394,25 @@ def precip_image(
 
 
 def extract_precipitation(
-    plots: ee.FeatureCollection, config: PipelineConfig, id_field: str = "fid"
+    plots: ee.FeatureCollection,
+    config: PipelineConfig,
+    id_field: str = "fid",
+    sample_geometry: str = "polygon",
 ) -> pd.DataFrame:
-    """Seasonal precipitation per plot (temporal mean, then spatial mean)."""
+    """Seasonal precipitation per labelled geometry (temporal then spatial)."""
+    cached = _cached_csv(config.precip_features_path, config.reuse_ee_features)
+    if cached is not None:
+        return cached
     tot = precip_image(config).reduceRegions(
-        reducer=ee.Reducer.mean(), collection=plots, scale=config.scale
+        reducer=_image_reducer(sample_geometry),
+        collection=plots,
+        scale=config.scale,
     )
     data = [
-        {id_field: f["properties"][id_field], "precipitation": f["properties"].get("mean")}
+        {
+            id_field: f["properties"][id_field],
+            "precipitation": _sampled_value(f["properties"], "precipitation"),
+        }
         for f in tot.getInfo()["features"]
     ]
     df = pd.DataFrame(data)

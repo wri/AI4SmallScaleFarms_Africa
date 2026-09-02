@@ -8,6 +8,8 @@ Layout used by the pipeline (paths are configured in `src/config.py`):
   batch exports downloaded from Google Drive).
 - `processed/` — the merged per-plot feature table used for training
   (`<area>_merged_features.csv`).
+- `models/` — fitted Random Forest pickles, per-area metrics JSON, and
+  `model_comparison.csv`.
 - `outputs/` — model outputs: the AOI feature GeoTIFF, probability raster and
   final classified crop map.
 

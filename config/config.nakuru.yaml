@@ -1,0 +1,39 @@
+# Nakuru county multiclass crop-type mapping.
+# Point survey labels; one 30 m pixel is sampled at each GPS location.
+# Rare crop_a classes (n < 10) collapse to "other".
+
+area_name: "Nakuru"
+gaul_dataset: "FAO/GAUL/2015/level2"
+gaul_name_field: "ADM2_NAME"
+gaul_name: "Nakuru"
+
+boundary_path: "data/raw/Nakuru/Nakuru_boundary/Nakuru.shp"
+survey_geojson: "data/raw/Nakuru/Nakuru Crop Type Mapping.geojson"
+
+label_mode: multiclass
+label_column: crop_a
+target_column: crop_class_code
+min_class_count: 10
+other_class_name: other
+sample_geometry: point
+class_weight: balanced
+cv_folds: 5
+
+start_date: "2024-03-01"
+end_date: "2024-08-31"
+n_harmonics: 2
+precip_reducer: mean
+
+area_calc_epsg: 32636
+working_epsg: 4326
+scale: 30
+export_tile_deg: 0.08
+
+ee_project: "land-use-project-505711"
+ee_high_volume: false
+reuse_ee_features: true
+
+cropland_dataset: "USGS/GFSAD1000_V1"
+cropland_band: "landcover"
+cropland_classes: [2, 3, 4, 5, 6]
+cropland_threshold: 40.0

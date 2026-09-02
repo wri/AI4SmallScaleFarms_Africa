@@ -17,6 +17,7 @@ survey_geojson: "data/raw/Nyandarua/nyandarua_smoke_subset.geojson"
 target_crop_names: ["Maize"]
 crop_columns: ["crop_a", "crop_b", "crop_c", "crop_d", "crop_e"]
 target_column: "maize_pos"
+label_mode: binary
 
 start_date: "2024-03-01"
 end_date: "2024-08-31"

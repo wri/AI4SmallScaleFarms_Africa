@@ -70,7 +70,20 @@ def add_eetc_to_path(config: PipelineConfig) -> Path:
     for p in (str(eetc_path / "gee_tools"), str(eetc_path)):
         if p in sys.path:
             sys.path.remove(p)
-    # Repo root first so `import gee_tools` resolves to this clone, not a
-    # stale site-packages copy.
+    # Repo root first so `import gee_tools` resolves to this clone.
+    # gee_tools/ is also on the path so `import harmonics` still works.
     sys.path.insert(0, str(eetc_path))
+    sys.path.insert(1, str(eetc_path / "gee_tools"))
     return eetc_path
+
+
+def import_harmonics():
+    """Load Azzari ``harmonics`` from the cloned ``eetc`` repo.
+
+    ``gee_tools.harmonics`` is not an installed package; it becomes importable
+    after :func:`add_eetc_to_path`.
+    """
+    add_eetc_to_path(PipelineConfig())
+    from gee_tools import harmonics  # type: ignore[import-not-found]
+
+    return harmonics

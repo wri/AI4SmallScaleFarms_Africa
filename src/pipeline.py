@@ -13,10 +13,12 @@ Typical usage::
     pipeline.run_training()      # survey -> features -> trained model
     pipeline.run_inference()     # AOI feature image -> probability -> map
 
-Because Earth Engine computes features on Google's servers, the slow steps are
-``getInfo`` / GeoTIFF downloads. Results are written locally under ``data/``
-(no Google Drive round-trip). The pipeline is still split into resumable
-stages so a failed download can be retried without retraining.
+Because Earth Engine computes features on Google's servers, the slow county-wide
+step is a **batch** ``Export.image.toAsset`` (12-hour limit, high memory).
+Interactive ``getDownloadURL`` is only used afterwards, on the stored image,
+and only for tiles that intersect the county polygon. Training samples that
+raster at labelled geometries (polygon zonal mean, or the 30 m pixel under a
+GPS point); the raster is never masked to those geometries.
 """
 
 from __future__ import annotations
@@ -83,31 +85,46 @@ class CropTypePipeline:
 
         with self._timed("prepare_survey"):
             survey_gdf = survey_mod.prepare_survey(cfg, survey_path)
-            print(f"Survey plots: {len(survey_gdf)}  target positives: {int(survey_gdf[cfg.target_column].sum())}")
+            sample_geometry = survey_mod.sample_geometry_mode(survey_gdf, cfg)
+            if cfg.is_binary:
+                print(
+                    f"Survey {sample_geometry}s: {len(survey_gdf)}  "
+                    f"target positives: {int(survey_gdf[cfg.target_column].sum())}"
+                )
+            else:
+                print(f"Survey {sample_geometry}s: {len(survey_gdf)}  multiclass")
+            if sample_geometry == "point":
+                print(f"Sampling Earth Engine at {cfg.scale} m (one pixel per GPS point)")
+            else:
+                print(f"Sampling Earth Engine as polygon zonal means at {cfg.scale} m")
 
         with self._timed("admin_boundary"):
             boundary = boundary_mod.get_admin_boundary(cfg)
-            # Small-area runs (aoi_bbox set) fetch imagery only for that box,
-            # still intersected with the Nyandarua polygon. Full runs use the
-            # admin polygon itself.
-            geometry = (
-                boundary_mod.get_aoi(cfg, boundary)
-                if cfg.aoi_bbox is not None
-                else boundary.geometry()
-            )
-
-        with self._timed("sentinel_collection"):
-            coll = sentinel_mod.get_masked_collection(geometry, cfg)
+            county = boundary.geometry()
 
         with self._timed("survey_to_ee"):
             plots = boundary_mod.survey_to_ee(survey_gdf, columns=["fid", "geometry"])
 
+        with self._timed("sentinel_collection"):
+            # County-wide collection, vegetation-index bands only. Labelled
+            # geometries are sampled later; the image itself is not masked
+            # to those plots or points.
+            coll = sentinel_mod.get_masked_collection(
+                county, cfg, bands=cfg.regression_bands
+            )
+
         with self._timed("extract_harmonic_features"):
-            harmonic_df = feat_mod.extract_harmonic_features(coll, plots, cfg)
+            harmonic_df = feat_mod.extract_harmonic_features(
+                coll, plots, cfg, aoi=county, sample_geometry=sample_geometry
+            )
         with self._timed("extract_terrain_features"):
-            terrain_df = feat_mod.extract_terrain_features(plots, cfg)
+            terrain_df = feat_mod.extract_terrain_features(
+                plots, cfg, sample_geometry=sample_geometry
+            )
         with self._timed("extract_precipitation"):
-            precip_df = feat_mod.extract_precipitation(plots, cfg)
+            precip_df = feat_mod.extract_precipitation(
+                plots, cfg, sample_geometry=sample_geometry
+            )
 
         with self._timed("merge_features"):
             merged = feat_mod.merge_features(
@@ -131,8 +148,12 @@ class CropTypePipeline:
                 merged = self.build_feature_table(survey_path)
 
         X, y = feat_mod.build_xy(merged, cfg)
+        legend = survey_mod.class_legend(merged, cfg)
+        class_codes, class_names = legend if legend else (None, None)
         with self._timed("train_random_forest"):
-            model, metrics = train_mod.train(X, y, cfg)
+            model, metrics = train_mod.train(
+                X, y, cfg, class_names=class_names, class_codes=class_codes
+            )
         print("Training metrics:", metrics)
         return model, metrics
 
@@ -140,8 +161,9 @@ class CropTypePipeline:
     def export_inference_features(self, local: bool = True):
         """Export the AOI feature image and cropland mask to ``data/outputs/``.
 
-        ``local=True`` (default) downloads GeoTIFFs here. ``local=False`` starts
-        Drive export tasks for very large AOIs if a local download is not wanted.
+        ``local=True`` (default) materializes the county-wide feature image to
+        an Earth Engine asset, then downloads GeoTIFF tiles that intersect the
+        county polygon. ``local=False`` starts Drive export tasks instead.
         """
         cfg = self.config
         with self._timed("build_feature_image"):
@@ -161,14 +183,20 @@ class CropTypePipeline:
         return feature_task
 
     # ------------------------------------------------------------------
-    def run_inference(self, model=None, feature_tif: Optional[str] = None):
+    def run_inference(
+        self,
+        model=None,
+        feature_tif: Optional[str] = None,
+        model_path: Optional[str] = None,
+    ):
         """Apply the trained model to the AOI feature GeoTIFF.
 
         If the feature image is not already on disk, it is built on Earth Engine
         and downloaded into ``data/outputs/`` first so inference is end-to-end.
+        ``model_path`` (CLI ``--model``) selects a pickle trained in another area.
         """
         cfg = self.config
-        model = model or train_mod.load_model(cfg)
+        model = model or train_mod.load_model(cfg, path=model_path)
         if feature_tif is None and not cfg.feature_image_path.exists():
             print("Feature GeoTIFF not found; extracting and downloading locally")
             self.export_inference_features(local=True)
@@ -219,6 +247,7 @@ class CropTypePipeline:
             cfg.terrain_features_path,
             cfg.precip_features_path,
             cfg.model_path,
+            cfg.metrics_path,
             cfg.feature_image_path,
             cfg.probability_map_path,
             cfg.classified_map_path,

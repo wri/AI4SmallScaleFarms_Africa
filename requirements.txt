@@ -32,3 +32,6 @@ joblib
 
 # Configuration
 pyyaml
+
+# Tests
+pytest

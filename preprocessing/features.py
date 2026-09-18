@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 import ee
 import numpy as np
@@ -74,6 +74,20 @@ def _sampled_value(props: dict, band_name: str):
         if key in props:
             return props[key]
     return None
+
+
+def _join_frames(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    id_field: str,
+    how: Literal["left", "right", "inner", "outer", "cross"] = "inner",
+    **kwargs,
+) -> pd.DataFrame:
+    """``DataFrame.merge`` stubs allow Series; keep a DataFrame for the type checker."""
+    joined = left.merge(right, on=id_field, how=how, **kwargs)
+    if isinstance(joined, pd.Series):
+        return joined.to_frame().T
+    return joined
 
 
 # ---------------------------------------------------------------------------
@@ -236,11 +250,11 @@ def extract_harmonic_features(
             ]
             band_df = pd.concat(frames, ignore_index=True)
             keep = [c for c in band_df.columns if c.startswith(f"{band}_") or c == id_field]
-            band_df = band_df[keep]
+            band_df = band_df.loc[:, keep]
             band_csv = band_dir / f"{band.lower()}.csv"
             band_df.to_csv(band_csv, index=False)
             print(f"  {band}: {time.perf_counter() - t0:.1f}s -> {band_csv}")
-        merged = band_df if merged is None else merged.merge(band_df, on=id_field, how="inner")
+        merged = band_df if merged is None else _join_frames(merged, band_df, id_field)
 
     if merged is None:
         return pd.DataFrame()
@@ -318,8 +332,11 @@ def concat_band_batches(
         if id_field not in df.columns:
             raise KeyError(f"'{id_field}' column not found in {band} files")
         cols = [c for c in df.columns if c != id_field]
-        df = df[[id_field] + cols]
-        merged = df if merged is None else merged.merge(df, on=id_field, how="inner", suffixes=("", f"_{band.lower()}"))
+        df = df.loc[:, [id_field] + cols]
+        merged = (
+            df if merged is None
+            else _join_frames(merged, df, id_field, suffixes=("", f"_{band.lower()}"))
+        )
     if merged is None:
         return pd.DataFrame()
     if out_path is not None:
@@ -362,7 +379,7 @@ def extract_terrain_features(
             for f in sampled.getInfo()["features"]
         ]
         df = pd.DataFrame(data)
-        out = df if out is None else out.merge(df, on=id_field)
+        out = df if out is None else _join_frames(out, df, id_field)
     if out is None:
         return pd.DataFrame()
     path = config.terrain_features_path
@@ -430,7 +447,7 @@ def select_harmonic_columns(df: pd.DataFrame, bands: Sequence[str], id_field: st
     """Keep only harmonic coefficient columns for the requested bands + id."""
     keep = [id_field] + [c for c in df.columns if any(c.startswith(f"{b}_") for b in bands)]
     keep = [c for c in keep if c in df.columns]
-    return df[keep]
+    return df.loc[:, keep]
 
 
 def merge_features(
@@ -439,11 +456,11 @@ def merge_features(
     id_field: str = "fid",
 ) -> pd.DataFrame:
     """Merge the survey table with all feature tables on ``id_field``."""
-    merged = survey_gdf
+    merged: pd.DataFrame = survey_gdf
     for frame in feature_frames:
         if frame is None or frame.empty:
             continue
-        merged = merged.merge(frame, on=id_field)
+        merged = _join_frames(merged, frame, id_field)
     return merged
 
 
@@ -458,12 +475,14 @@ def correlation_pruned_columns(
     return [c for c in numerical.columns if c not in to_drop]
 
 
-def build_xy(merged: pd.DataFrame, config: PipelineConfig):
+def build_xy(merged: pd.DataFrame, config: PipelineConfig) -> Tuple[pd.DataFrame, pd.Series]:
     """Split the merged table into feature matrix ``X`` and target ``y``."""
     feature_cols = [c for c in config.feature_columns if c in merged.columns]
     missing = [c for c in config.feature_columns if c not in merged.columns]
     if missing:
         print(f"Warning: missing feature columns dropped from X: {missing}")
-    X = merged[feature_cols]
-    y = merged[config.target_column]
+    X = merged.loc[:, feature_cols]
+    y = merged.loc[:, config.target_column]
+    if isinstance(y, pd.DataFrame):
+        y = y.iloc[:, 0]
     return X, y

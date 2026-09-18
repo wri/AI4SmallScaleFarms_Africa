@@ -463,7 +463,7 @@ def plot_pipeline_stages(
     if boundary is not None:
         boundary.plot(ax=ax_survey, facecolor="#e8efe4", edgecolor="#4a5d3a", linewidth=1.2)
 
-    legend_items = [
+    legend_items: list = [
         Patch(facecolor="#e8efe4", edgecolor="#4a5d3a", label="County boundary"),
     ]
     if config.is_binary:
@@ -493,7 +493,7 @@ def plot_pipeline_stages(
             if subset.empty:
                 continue
             color = _class_color(name, i)
-            n = len(subset)
+            n_cls = len(subset)
             if point_survey:
                 subset.plot(
                     ax=ax_survey, color=color, markersize=18,
@@ -505,7 +505,7 @@ def plot_pipeline_stages(
                     linewidth=0.4, alpha=0.9,
                 )
             legend_items.append(
-                Patch(facecolor=color, edgecolor="#333333", label=f"{name} (n={n})")
+                Patch(facecolor=color, edgecolor="#333333", label=f"{name} (n={n_cls})")
             )
         survey_title = (
             f"1. Survey {'points' if point_survey else 'plots'} in boundary  (n={len(survey)})"
@@ -522,8 +522,8 @@ def plot_pipeline_stages(
             )
 
     if config.aoi_bbox is not None:
-        w, s, e, n = config.aoi_bbox
-        ax_survey.add_patch(Rectangle((w, s), e - w, n - s, fill=False,
+        west, south, east, north = config.aoi_bbox
+        ax_survey.add_patch(Rectangle((west, south), east - west, north - south, fill=False,
                                       linestyle="--", edgecolor="#c0392b", linewidth=1.2))
         legend_items.append(Line2D([0], [0], color="#c0392b", linestyle="--", label="Inference AOI"))
     ax_survey.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.92)
@@ -600,7 +600,7 @@ def plot_pipeline_stages(
         _placeholder(ax_class, "Classified map not produced yet\n(run infer / all)")
         ax_class.set_title("4. Post-processed map")
 
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(save_path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return save_path

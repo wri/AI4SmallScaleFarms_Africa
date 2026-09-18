@@ -189,7 +189,7 @@ def plot_harmonic_fit(
     ax.set_xlabel("Date", fontsize=12)
     ax.set_ylabel(value_col, fontsize=12)
     ax.set_title(f"Harmonic Fitted {value_col} and Observed {value_col}", fontsize=15)
-    date_labels = [date.fromordinal(int(i)) for i in ax.get_xticks() if i >= 1]
+    date_labels = [str(date.fromordinal(int(i))) for i in ax.get_xticks() if i >= 1]
     ax.set_xticklabels(date_labels, rotation=45, fontsize=10)
     for spine in ("top", "right", "bottom", "left"):
         ax.spines[spine].set_visible(False)
